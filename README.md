@@ -2,6 +2,8 @@
 
 **A single HTML file that helps you get to know a codebase.** Treemap of every file, an interactive dependency graph, instant full-text search, and a built-in code viewer — no install, no server, no upload. Open `repo-atlas.html` in your browser and point it at a folder.
 
+**▶ Use it online: [rajathpi.github.io/repo-atlas](https://rajathpi.github.io/repo-atlas/)** — try the [demo project](https://rajathpi.github.io/repo-atlas/#demo) or [load vLLM's treemap](https://rajathpi.github.io/repo-atlas/#gh=vllm-project/vllm). Local folders are still processed entirely in your browser; nothing is uploaded.
+
 ![Treemap of vLLM](shots/treemap.png)
 *The entire vLLM repo (6,743 files) loaded straight from the GitHub API — every rectangle is a file, sized by bytes, colored by language.*
 
