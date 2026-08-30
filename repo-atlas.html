@@ -1,0 +1,2219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repo Atlas — codebase explorer</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2129; --border:#2d333b;
+    --text:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --danger:#f85149; --ok:#3fb950;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  header{
+    padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--border);
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+  }
+  header h1{font-size:15px; font-weight:600; margin-right:6px; white-space:nowrap}
+  header h1 span{color:var(--accent)}
+  input[type=text], input[type=password], input[type=search], select{
+    background:var(--bg); border:1px solid var(--border); color:var(--text);
+    border-radius:6px; padding:5px 9px; font-size:13px; outline:none;
+  }
+  input:focus{border-color:var(--accent)}
+  #repoInput{width:220px}
+  #tokenInput{width:130px}
+  #excludeInput{width:210px}
+  button{
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    border-radius:6px; padding:5px 11px; font-size:13px; cursor:pointer; white-space:nowrap;
+  }
+  button:hover{border-color:var(--accent); color:var(--accent)}
+  button.primary{background:#1f6feb; border-color:#1f6feb; color:#fff}
+  button.primary:hover{background:#388bfd; color:#fff}
+  button.tab{border-radius:6px 6px 0 0; border-bottom:none; background:transparent; color:var(--dim)}
+  button.tab.active{background:var(--bg); color:var(--text); border-color:var(--border)}
+  label.small{color:var(--dim); font-size:12px; white-space:nowrap}
+  label.chk{color:var(--dim); font-size:12px; display:inline-flex; gap:4px; align-items:center; cursor:pointer}
+  #toolbar2{
+    padding:6px 14px 0; background:var(--panel); border-bottom:1px solid var(--border);
+    display:flex; gap:10px; align-items:center; min-height:40px;
+  }
+  #breadcrumb{flex:1; display:flex; flex-wrap:wrap; gap:2px; align-items:center; font-size:13px; min-width:0; padding-bottom:6px}
+  #breadcrumb .crumb{color:var(--accent); cursor:pointer; padding:1px 4px; border-radius:4px}
+  #breadcrumb .crumb:hover{background:var(--panel2)}
+  #breadcrumb .sep{color:var(--dim)}
+  #breadcrumb .crumb.last{color:var(--text); cursor:default}
+  #graphCtrls{flex:1; display:flex; gap:8px; align-items:center; padding-bottom:6px; flex-wrap:wrap}
+  #searchWrap{display:flex; gap:6px; align-items:center; padding-bottom:6px}
+  #searchInput{width:190px}
+  #status{padding:3px 14px; font-size:12px; color:var(--dim); background:var(--panel); border-bottom:1px solid var(--border); min-height:22px; display:flex; align-items:center; gap:10px}
+  #status.error{color:var(--danger)}
+  #srcBadge{border:1px solid var(--border); border-radius:10px; padding:1px 9px; font-size:11px; white-space:nowrap; flex-shrink:0}
+  #srcBadge.gh{color:#d29922; border-color:#9e6a03}
+  #srcBadge.loc{color:var(--ok); border-color:#238636}
+  #progressWrap{flex:0 0 180px; height:6px; background:var(--panel2); border-radius:3px; overflow:hidden; display:none}
+  #progressBar{height:100%; width:0; background:var(--accent); transition:width .15s}
+  main{flex:1; display:flex; min-height:0; position:relative}
+  #canvasWrap{flex:1; position:relative; min-width:0}
+  canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+  #cvsMap{cursor:pointer}
+  #cvsGraph{cursor:grab; display:none}
+  #graphHelp{
+    position:absolute; left:10px; bottom:10px; font-size:11.5px; color:var(--dim);
+    background:rgba(13,17,23,.85); border:1px solid var(--border); border-radius:6px; padding:6px 10px;
+    display:none; pointer-events:none; line-height:1.6;
+  }
+  #graphEmpty{position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:6; pointer-events:none; padding:30px}
+  #graphEmpty .box{
+    background:rgba(22,27,34,.96); border:1px solid var(--border); border-radius:10px;
+    padding:18px 22px; max-width:500px; font-size:13.5px; line-height:1.65; color:var(--text);
+    box-shadow:0 8px 30px rgba(0,0,0,.5);
+  }
+  #graphEmpty .box b{color:var(--accent)}
+  #tooltip{
+    position:fixed; pointer-events:none; z-index:30; display:none; max-width:440px;
+    background:rgba(22,27,34,.96); border:1px solid var(--border); border-radius:6px;
+    padding:7px 10px; font-size:12px; box-shadow:0 4px 16px rgba(0,0,0,.5);
+  }
+  #tooltip .path{color:var(--accent); word-break:break-all; font-family:Consolas,monospace}
+  #tooltip .meta{color:var(--dim); margin-top:2px}
+  aside{
+    width:320px; background:var(--panel); border-left:1px solid var(--border);
+    overflow-y:auto; padding:14px; flex-shrink:0;
+  }
+  aside h2{font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:16px 0 8px; display:flex; justify-content:space-between; align-items:center}
+  aside h2 .x{cursor:pointer; color:var(--dim); font-size:14px; text-transform:none}
+  aside h2 .x:hover{color:var(--danger)}
+  aside section:first-child h2{margin-top:0}
+  #summary{font-size:13px; line-height:1.7}
+  #summary b{font-weight:600}
+  #langBar{display:flex; height:10px; border-radius:5px; overflow:hidden; margin-bottom:8px; background:var(--panel2)}
+  #langBar div{height:100%}
+  .langRow{display:flex; align-items:center; gap:7px; font-size:12.5px; padding:2.5px 0}
+  .langRow .dot{width:9px; height:9px; border-radius:50%; flex-shrink:0}
+  .langRow .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .langRow .pc{color:var(--dim); font-variant-numeric:tabular-nums}
+  .fileRow{
+    display:flex; gap:7px; font-size:12px; padding:3.5px 0; cursor:pointer;
+    border-bottom:1px solid rgba(45,51,59,.5); align-items:baseline;
+  }
+  .fileRow:hover .fp{color:var(--accent)}
+  .fileRow .fp{flex:1; font-family:Consolas,monospace; word-break:break-all; color:var(--text)}
+  .fileRow .fs{color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums}
+  .hit{
+    font-size:12px; padding:5px 0; border-bottom:1px solid rgba(45,51,59,.5); cursor:pointer;
+  }
+  .hit:hover .hp{color:var(--accent)}
+  .hit .hp{font-family:Consolas,monospace; word-break:break-all}
+  .hit .hs{color:var(--dim); font-family:Consolas,monospace; white-space:pre; overflow:hidden; text-overflow:ellipsis; display:block; margin-top:1px}
+  .hit .hs mark{background:#9e6a03; color:#fff; border-radius:2px; padding:0 1px}
+  #dropHint{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:12px; color:var(--dim); text-align:center; padding:24px; z-index:5;
+  }
+  #dropHint .big{font-size:20px; color:var(--text)}
+  #dropHint kbd{background:var(--panel2); border:1px solid var(--border); border-radius:4px; padding:1px 6px; font-size:12px}
+  #cacheChips{display:flex; gap:8px; flex-wrap:wrap; justify-content:center}
+  #cacheChips button{font-size:12px}
+  body.dragging #canvasWrap{outline:2px dashed var(--accent); outline-offset:-6px}
+  /* code viewer */
+  #viewer{
+    position:absolute; top:0; right:0; bottom:0; width:min(780px,72%); z-index:20;
+    background:var(--panel); border-left:1px solid var(--border); display:none;
+    flex-direction:column; box-shadow:-8px 0 24px rgba(0,0,0,.45);
+  }
+  #viewer.open{display:flex}
+  #vHead{padding:10px 14px; border-bottom:1px solid var(--border); display:flex; gap:10px; align-items:center}
+  #vTitle{flex:1; font-family:Consolas,monospace; font-size:13px; color:var(--accent); word-break:break-all}
+  #vMeta{color:var(--dim); font-size:12px; white-space:nowrap}
+  #vDeps{padding:8px 14px; border-bottom:1px solid var(--border); max-height:210px; overflow-y:auto; font-size:12px; display:none}
+  #vDeps .depcol{margin-bottom:8px}
+  #vDeps .lbl{color:var(--dim); margin-right:6px; display:block; margin-bottom:3px}
+  #vDeps .hint{font-size:11px; color:#57606a}
+  #vDeps .depRow{display:flex; gap:8px; align-items:baseline; padding:2px 0; cursor:pointer; min-width:0}
+  #vDeps .depRow .dl{color:#d29922; font-family:Consolas,monospace; font-size:11px; white-space:nowrap}
+  #vDeps .depRow .ds{color:var(--dim); font-family:Consolas,monospace; font-size:11px; white-space:pre; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0}
+  #vDeps .depRow:hover .ds{color:var(--text)}
+  .chip{
+    display:inline-block; background:var(--panel2); border:1px solid var(--border); border-radius:10px;
+    padding:1px 8px; margin:2px 3px 2px 0; cursor:pointer; font-family:Consolas,monospace; font-size:11.5px;
+  }
+  .chip:hover{border-color:var(--accent); color:var(--accent)}
+  .chip.ref{border-style:dashed}
+  #vBody{flex:1; overflow:auto; font:12px/1.5 Consolas,monospace; padding:8px 0}
+  #vBody .ln{display:flex}
+  #vBody .no{
+    flex:0 0 52px; text-align:right; padding-right:12px; color:#57606a; user-select:none;
+  }
+  #vBody .ct{white-space:pre; flex:1; padding-right:16px}
+  #vBody .ln.hitline{background:rgba(158,106,3,.18)}
+  #vBody mark{background:#9e6a03; color:#fff; border-radius:2px; padding:0 1px}
+  #vBody .cm{color:#7d8590}
+  #vBody .st{color:#a5d6ff}
+</style>
+</head>
+<body>
+<header>
+  <h1>Repo <span>Atlas</span></h1>
+  <button class="primary" id="folderBtn">Open local folder…</button>
+  <input type="file" id="folderInput" webkitdirectory multiple hidden>
+  <select id="cacheSelect" title="Previously indexed codebases (cached in this browser)"><option value="">cached indexes…</option></select>
+  <label class="small">|</label>
+  <input type="text" id="repoInput" placeholder="GitHub: owner/repo[@branch]">
+  <input type="password" id="tokenInput" placeholder="token (optional)" autocomplete="off">
+  <button id="loadBtn">Load GitHub</button>
+  <label class="small">exclude:</label>
+  <input type="text" id="excludeInput" value=".git, node_modules, __pycache__, .venv, venv, dist, build, .mypy_cache, .pytest_cache, target, .idea, .vscode">
+  <button id="applyBtn" title="Re-apply the exclude list to the loaded codebase (Enter works too)">Apply</button>
+</header>
+<div id="toolbar2">
+  <button class="tab active" id="tabMap">Treemap</button>
+  <button class="tab" id="tabGraph">Graph</button>
+  <div id="breadcrumb"></div>
+  <div id="graphCtrls" style="display:none">
+    <button id="gReset">⌂ Top level</button>
+    <button id="gBack" style="display:none">← Back to folders</button>
+    <button id="gHop" style="display:none">+1 hop</button>
+    <label class="chk"><input type="checkbox" id="gImports" checked> imports</label>
+    <label class="chk"><input type="checkbox" id="gRefs" checked> path refs</label>
+    <label class="chk"><input type="checkbox" id="gIso"> hide unconnected</label>
+  </div>
+  <div id="searchWrap">
+    <select id="searchMode" title="names: filter by file path (live) — content: grep inside files (Enter)">
+      <option value="names">names</option>
+      <option value="content">content</option>
+    </select>
+    <input type="search" id="searchInput" placeholder="filter / grep…">
+    <button id="pngBtn" title="Export current view as PNG">PNG</button>
+  </div>
+</div>
+<div id="status"><span id="srcBadge" style="display:none"></span><span id="statusText">No codebase loaded. Open a local folder (best — enables the dependency graph), pick a cached index, or load a GitHub repo.</span>
+  <div id="progressWrap"><div id="progressBar"></div></div>
+</div>
+<main>
+  <div id="canvasWrap">
+    <canvas id="cvsMap"></canvas>
+    <canvas id="cvsGraph"></canvas>
+    <div id="graphHelp">
+      scroll = zoom · drag bg = pan · drag node = move<br>
+      click = focus deps · dbl-click folder = expand · dbl-click file = code · right-click = collapse
+    </div>
+    <div id="graphEmpty"></div>
+    <div id="dropHint">
+      <div class="big">Get to know a codebase</div>
+      <div><b>Treemap</b>: every file, sized by bytes, colored by language.<br>
+      <b>Graph</b>: which files depend on which — imports <i>and</i> "this file mentions that file" (configs, YAML…).<br>
+      <b>Search</b>: grep every file instantly once indexed. Click any file to read its code.</div>
+      <div>Drop a folder anywhere, or <kbd>Open local folder…</kbd> — indexing runs once, then it's cached.</div>
+      <div><button class="primary" id="demoBtn">▶ Load demo project</button></div>
+      <div id="cacheChips"></div>
+    </div>
+  </div>
+  <aside>
+    <section>
+      <h2>Current view</h2>
+      <div id="summary">—</div>
+      <div style="margin-top:10px"><div id="langBar"></div><div id="langList"></div></div>
+    </section>
+    <section id="secSel" style="display:none">
+      <h2>Selection <span class="x" id="selClose">✕</span></h2>
+      <div id="selBody"></div>
+    </section>
+    <section id="secResults" style="display:none">
+      <h2><span id="resTitle">Search results</span> <span class="x" id="resClose">✕</span></h2>
+      <div id="resBody"></div>
+    </section>
+    <section id="secHubs" style="display:none">
+      <h2>Most depended-on</h2>
+      <div id="hubBody"></div>
+    </section>
+    <section>
+      <h2>Largest files</h2>
+      <div id="bigFiles"></div>
+    </section>
+  </aside>
+  <div id="viewer">
+    <div id="vHead">
+      <span id="vTitle"></span>
+      <span id="vMeta"></span>
+      <button id="vGraph" title="Show this file's dependencies in the Graph view">Graph</button>
+      <button id="vClose">✕</button>
+    </div>
+    <div id="vDeps"></div>
+    <div id="vBody"></div>
+  </div>
+</main>
+<div id="tooltip"></div>
+
+<script>
+"use strict";
+/* ================= language colors ================= */
+const LANGS = {
+  py:["Python","#3572A5"], pyi:["Python","#3572A5"], pyx:["Cython","#5a76b8"], pxd:["Cython","#5a76b8"],
+  ipynb:["Notebook","#DA5B0B"],
+  c:["C","#8f8f8f"], h:["C/C++ header","#6f7f95"], hpp:["C/C++ header","#6f7f95"], hh:["C/C++ header","#6f7f95"],
+  cc:["C++","#f34b7d"], cpp:["C++","#f34b7d"], cxx:["C++","#f34b7d"], inl:["C++","#f34b7d"],
+  cu:["CUDA","#76b900"], cuh:["CUDA","#76b900"],
+  js:["JavaScript","#f1e05a"], mjs:["JavaScript","#f1e05a"], cjs:["JavaScript","#f1e05a"],
+  ts:["TypeScript","#3178c6"], tsx:["TypeScript","#3178c6"], jsx:["JavaScript","#f1e05a"], vue:["Vue","#41b883"], svelte:["Svelte","#ff3e00"],
+  rs:["Rust","#dea584"], go:["Go","#00add8"], java:["Java","#b07219"], kt:["Kotlin","#a97bff"], scala:["Scala","#c22d40"],
+  rb:["Ruby","#701516"], php:["PHP","#4f5d95"], swift:["Swift","#f05138"], m:["Obj-C","#438eff"], cs:["C#","#178600"],
+  lua:["Lua","#000080"], r:["R","#198ce7"], jl:["Julia","#a270ba"], zig:["Zig","#ec915c"],
+  sh:["Shell","#89e051"], bash:["Shell","#89e051"], zsh:["Shell","#89e051"], bat:["Batch","#c1f12e"], ps1:["PowerShell","#4273ca"], psm1:["PowerShell","#4273ca"],
+  md:["Markdown","#5b9bd5"], rst:["reST","#5b9bd5"], txt:["Text","#9aa0a6"], adoc:["AsciiDoc","#5b9bd5"],
+  json:["JSON","#a8b1bd"], jsonl:["JSON","#a8b1bd"], yaml:["YAML","#cba64c"], yml:["YAML","#cba64c"],
+  toml:["TOML","#9c7a4b"], ini:["Config","#8a939e"], cfg:["Config","#8a939e"], conf:["Config","#8a939e"], env:["Config","#8a939e"], properties:["Config","#8a939e"],
+  html:["HTML","#e34c26"], htm:["HTML","#e34c26"], css:["CSS","#563d7c"], scss:["CSS","#563d7c"], less:["CSS","#563d7c"],
+  proto:["Protobuf","#4d7fbe"], cmake:["CMake","#6d9e3f"], mk:["Make","#6d9e3f"], sql:["SQL","#e38c00"], graphql:["GraphQL","#e10098"],
+  tf:["Terraform","#7b42bc"], hcl:["Terraform","#7b42bc"], xml:["XML","#8a939e"], gradle:["Gradle","#02303a"],
+  png:["Image","#b57edc"], jpg:["Image","#b57edc"], jpeg:["Image","#b57edc"], gif:["Image","#b57edc"], svg:["Image","#b57edc"], ico:["Image","#b57edc"], webp:["Image","#b57edc"],
+  ttf:["Font","#8d6e63"], otf:["Font","#8d6e63"], woff:["Font","#8d6e63"], woff2:["Font","#8d6e63"],
+  so:["Binary","#6e7681"], a:["Binary","#6e7681"], dll:["Binary","#6e7681"], bin:["Binary","#6e7681"], wasm:["Binary","#6e7681"],
+  pt:["Model","#ee4c2c"], pth:["Model","#ee4c2c"], onnx:["Model","#ee4c2c"], safetensors:["Model","#ee4c2c"], gguf:["Model","#ee4c2c"],
+  lock:["Lockfile","#57606a"], sum:["Lockfile","#57606a"], pdf:["PDF","#d93025"], csv:["Data","#3c9970"], tsv:["Data","#3c9970"], parquet:["Data","#3c9970"],
+};
+const SPECIAL_NAMES = {
+  dockerfile:["Docker","#2496ed"], makefile:["Make","#6d9e3f"], "cmakelists.txt":["CMake","#6d9e3f"],
+  license:["Text","#9aa0a6"], "license.txt":["Text","#9aa0a6"], notice:["Text","#9aa0a6"], jenkinsfile:["Groovy","#e69f56"],
+};
+const BINARY_EXT = new Set(["png","jpg","jpeg","gif","ico","webp","ttf","otf","woff","woff2","so","a","dll","bin","wasm","pt","pth","onnx","safetensors","gguf","pdf","parquet","zip","gz","tar","xz","bz2","7z","exe","o","obj","lib","pyc","whl","jar","class","mp3","mp4","wav","avi","mov","npy","npz","pkl","db","sqlite","eot","dylib"]);
+function extOf(name){ const d = name.lastIndexOf("."); return d > 0 ? name.slice(d+1).toLowerCase() : ""; }
+function langOf(name){
+  const low = name.toLowerCase();
+  if (SPECIAL_NAMES[low]) return SPECIAL_NAMES[low];
+  if (low.startsWith("dockerfile")) return SPECIAL_NAMES.dockerfile;
+  const ext = extOf(low);
+  if (ext){
+    if (LANGS[ext]) return LANGS[ext];
+    let hsum = 0;
+    for (let i=0;i<ext.length;i++) hsum = (hsum*31 + ext.charCodeAt(i)) >>> 0;
+    return ["."+ext, `hsl(${hsum%360},45%,55%)`];
+  }
+  return ["Other","#6e7681"];
+}
+
+/* ================= state ================= */
+let files = [];            // [{path,size,lang,file?}] id = index
+let pathToId = new Map();
+let byBase = new Map();    // basename -> [ids]
+let dirSet = new Set();
+let contents = [];         // id -> string|null
+let edgesOut = [];         // id -> Map(toId -> 'imp'|'ref')
+let edgesIn = [];          // id -> Map(fromId -> kind)
+let edgeEvidence = new Map(); // "from|to" -> [line numbers in the FROM file where the reference occurs]
+let indexed = false, indexing = false;
+let rawEntries = null;     // as loaded, before excludes — lets Apply re-filter without reloading
+let rootName = "", source = null, gh = null;  // gh = {owner,repo,branch}
+let tree = null, currentRoot = null;
+let hoverNode = null, flashNode = null, flashUntil = 0;
+let searchTerm = "";       // name-mode live filter
+let matchedFiles = null;   // Set of ids matched by content grep (used for dimming)
+let activeView = "map";
+let viewerFileId = null;
+
+const $ = id => document.getElementById(id);
+const cvsMap = $("cvsMap"), mctx = cvsMap.getContext("2d");
+const cvsGraph = $("cvsGraph"), gctx = cvsGraph.getContext("2d");
+const tooltip = $("tooltip");
+
+function setStatus(msg, isError){ $("statusText").textContent = msg; $("status").className = isError ? "error" : ""; }
+function setProgress(frac){
+  $("progressWrap").style.display = frac == null ? "none" : "block";
+  if (frac != null) $("progressBar").style.width = (frac*100).toFixed(1) + "%";
+}
+function humanSize(n){
+  if (n < 1024) return n + " B";
+  const u = ["KB","MB","GB","TB"]; let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length-1);
+  return n.toFixed(n >= 100 ? 0 : 1) + " " + u[i];
+}
+const fmtInt = n => n.toLocaleString("en-US");
+function escapeHtml(s){ return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function escapeReg(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+const yieldUI = () => new Promise(r => setTimeout(r, 0));
+
+/* ================= dataset setup ================= */
+function excludeList(){
+  return $("excludeInput").value.split(",").map(s => s.trim()).filter(Boolean);
+}
+function setDataset(entries, name, src, ghInfo, skipExcludes){
+  // entries: [{path,size,file?}]
+  const ex = skipExcludes ? new Set() : new Set(excludeList());
+  files = []; pathToId = new Map(); byBase = new Map(); dirSet = new Set();
+  contents = []; edgesOut = []; edgesIn = []; edgeEvidence = new Map(); indexed = false;
+  matchedFiles = null; graph.sel = null;
+  rootName = name; source = src; gh = ghInfo || null;
+  for (const e of entries){
+    const parts = e.path.split("/");
+    if (parts.some(p => ex.has(p))) continue;
+    const id = files.length;
+    files.push({path:e.path, size:e.size||0, lang:langOf(parts[parts.length-1]), file:e.file||null});
+    pathToId.set(e.path, id);
+    const base = parts[parts.length-1].toLowerCase();
+    if (!byBase.has(base)) byBase.set(base, []);
+    byBase.get(base).push(id);
+    let cur = "";
+    for (let i=0; i<parts.length-1; i++){ cur = cur ? cur+"/"+parts[i] : parts[i]; dirSet.add(cur); }
+  }
+  if (!files.length){ setStatus("All files were excluded — loosen the exclude list.", true); return false; }
+  contents = new Array(files.length).fill(null);
+  edgesOut = files.map(() => new Map());
+  edgesIn = files.map(() => new Map());
+  tree = buildTree();
+  currentRoot = tree;
+  $("dropHint").style.display = "none";
+  $("secHubs").style.display = "none";
+  graph.expanded = new Set(); graph.mode = "folders"; graph.built = false;
+  relayoutMap(); if (activeView === "graph") buildGraph();
+  setStatus(`${rootName} — ${fmtInt(tree.fileCount)} files, ${humanSize(tree.size)}`);
+  updateGraphEmpty();
+  return true;
+}
+
+/* ================= tree (treemap data) ================= */
+function buildTree(){
+  const root = {name: rootName || "/", isFile:false, children:new Map(), parent:null, path:""};
+  files.forEach((f, id) => {
+    const parts = f.path.split("/");
+    let cur = root;
+    for (let i=0; i<parts.length; i++){
+      const nm = parts[i];
+      if (i === parts.length-1){
+        cur.children.set(nm, {name:nm, isFile:true, size:f.size, parent:cur, path:f.path, lang:f.lang, fileId:id});
+      } else {
+        let next = cur.children.get(nm);
+        if (!next || next.isFile){
+          next = {name:nm, isFile:false, children:new Map(), parent:cur, path: cur.path ? cur.path+"/"+nm : nm};
+          cur.children.set(nm, next);
+        }
+        cur = next;
+      }
+    }
+  });
+  finalize(root);
+  return root;
+}
+function finalize(node){
+  if (node.isFile){
+    node.total = Math.max(node.size, 1); node.fileCount = 1; node.domColor = node.lang[1];
+    return;
+  }
+  node.kids = [...node.children.values()];
+  node.total = 0; node.fileCount = 0; node.size = 0;
+  for (const k of node.kids){
+    finalize(k);
+    node.total += k.total; node.size += k.size ?? 0; node.fileCount += k.fileCount;
+  }
+  node.kids.sort((a,b) => b.total - a.total);
+  node.domColor = node.kids.length ? node.kids[0].domColor : "#6e7681";
+}
+function nodeByPath(path){
+  let cur = tree;
+  if (!path) return cur;
+  for (const seg of path.split("/")){
+    if (cur.isFile || !cur.children.has(seg)) return null;
+    cur = cur.children.get(seg);
+  }
+  return cur;
+}
+
+/* ================= treemap layout + draw ================= */
+const PAD = 2, HEADER = 16;
+function squarify(kids, x, y, w, h){
+  const out = [];
+  let total = 0;
+  for (const k of kids) total += k.total;
+  if (total <= 0 || w <= 0 || h <= 0) return out;
+  const scale = (w*h)/total;
+  const areas = kids.map(k => ({node:k, a:k.total*scale}));
+  let row = [], rowSum = 0, i = 0;
+  function worst(list, sum, side){
+    if (!list.length || sum === 0) return Infinity;
+    let mx = 0, mn = Infinity;
+    for (const r of list){ if (r.a > mx) mx = r.a; if (r.a < mn) mn = r.a; }
+    const s2 = sum*sum, d2 = side*side;
+    return Math.max(d2*mx/s2, s2/(d2*mn));
+  }
+  function layoutRow(list, sum){
+    if (w >= h){
+      const stripW = h > 0 ? sum/h : 0; let yy = y;
+      for (const r of list){ const hh = stripW > 0 ? r.a/stripW : 0; out.push({node:r.node, x, y:yy, w:stripW, h:hh}); yy += hh; }
+      x += stripW; w -= stripW;
+    } else {
+      const stripH = w > 0 ? sum/w : 0; let xx = x;
+      for (const r of list){ const ww = stripH > 0 ? r.a/stripH : 0; out.push({node:r.node, x:xx, y, w:ww, h:stripH}); xx += ww; }
+      y += stripH; h -= stripH;
+    }
+  }
+  while (i < areas.length){
+    const side = Math.min(w, h);
+    const cand = [...row, areas[i]], candSum = rowSum + areas[i].a;
+    if (!row.length || worst(cand, candSum, side) <= worst(row, rowSum, side)){ row = cand; rowSum = candSum; i++; }
+    else { layoutRow(row, rowSum); row = []; rowSum = 0; }
+  }
+  if (row.length) layoutRow(row, rowSum);
+  return out;
+}
+function layoutNode(node, x, y, w, h, depth){
+  node.rect = {x, y, w, h, depth};
+  node.solid = false; node.hasHeader = false;
+  if (node.isFile) return;
+  let ix = x, iy = y, iw = w, ih = h;
+  if (depth > 0){
+    if (w >= 52 && h >= 38){ node.hasHeader = true; iy += HEADER; ih -= HEADER; }
+    ix += PAD; iw -= 2*PAD; ih -= PAD + (node.hasHeader ? 0 : PAD);
+    if (!node.hasHeader) iy += PAD;
+  }
+  if (iw < 3 || ih < 3){ node.solid = true; return; }
+  for (const r of squarify(node.kids, ix, iy, iw, ih)) layoutNode(r.node, r.x, r.y, r.w, r.h, depth+1);
+}
+function isDimmedFile(node){
+  if (searchTerm && !node.path.toLowerCase().includes(searchTerm)) return true;
+  if (matchedFiles && node.fileId != null && !matchedFiles.has(node.fileId)) return true;
+  return false;
+}
+function annotateMatches(node){
+  if (node.isFile){ node.matched = !isDimmedFile(node); return node.matched; }
+  let any = false;
+  for (const k of node.kids) if (annotateMatches(k)) any = true;
+  node.matched = any; return any;
+}
+function shade(depth){ return `hsl(215,15%,${12 + Math.min(depth,6)*3}%)`; }
+const dimActive = () => !!(searchTerm || matchedFiles);
+function drawMap(){
+  const rect = cvsMap.getBoundingClientRect();
+  mctx.clearRect(0, 0, rect.width, rect.height);
+  if (!currentRoot) return;
+  if (dimActive()) annotateMatches(currentRoot);
+  drawMapNode(currentRoot);
+  if (flashNode && performance.now() < flashUntil && flashNode.rect){
+    const r = flashNode.rect;
+    mctx.save(); mctx.strokeStyle = "#fff"; mctx.lineWidth = 2.5;
+    mctx.strokeRect(r.x+1, r.y+1, r.w-2, r.h-2); mctx.restore();
+    requestAnimationFrame(drawMap);
+  }
+  if (hoverNode && hoverNode.rect){
+    const r = hoverNode.rect;
+    mctx.save(); mctx.strokeStyle = "#58a6ff"; mctx.lineWidth = 1.5;
+    mctx.strokeRect(r.x+.75, r.y+.75, r.w-1.5, r.h-1.5); mctx.restore();
+  }
+}
+function drawMapNode(node){
+  const r = node.rect;
+  if (!r || r.w < .5 || r.h < .5) return;
+  const dimmed = dimActive() && !node.matched;
+  mctx.globalAlpha = dimmed ? 0.12 : 1;
+  if (node.isFile || node.solid){
+    mctx.fillStyle = node.domColor;
+    mctx.fillRect(r.x, r.y, r.w, r.h);
+    mctx.strokeStyle = "rgba(0,0,0,.45)"; mctx.lineWidth = 1;
+    if (r.w > 2.5 && r.h > 2.5) mctx.strokeRect(r.x+.5, r.y+.5, r.w-1, r.h-1);
+    if (node.isFile && r.w > 44 && r.h > 15){
+      mctx.fillStyle = "rgba(0,0,0,.72)";
+      mctx.font = "10.5px 'Segoe UI',sans-serif"; mctx.textBaseline = "middle";
+      const label = ellipsize(node.name, r.w - 8);
+      if (label) mctx.fillText(label, r.x + 4, r.y + Math.min(r.h/2, 12));
+    }
+    mctx.globalAlpha = 1;
+    return;
+  }
+  mctx.fillStyle = shade(r.depth);
+  mctx.fillRect(r.x, r.y, r.w, r.h);
+  mctx.strokeStyle = "rgba(139,148,158,.35)"; mctx.lineWidth = 1;
+  mctx.strokeRect(r.x+.5, r.y+.5, r.w-1, r.h-1);
+  if (node.hasHeader){
+    mctx.fillStyle = "#9fb0c0"; mctx.font = "600 11px 'Segoe UI',sans-serif"; mctx.textBaseline = "middle";
+    const label = ellipsize(node.name + "/", r.w - 10);
+    if (label) mctx.fillText(label, r.x + 5, r.y + HEADER/2 + 1);
+  }
+  mctx.globalAlpha = 1;
+  for (const k of node.kids) drawMapNode(k);
+}
+const charW = 5.6;
+function ellipsize(s, maxPx){
+  const maxChars = Math.floor(maxPx/charW);
+  if (maxChars < 3) return null;
+  return s.length <= maxChars ? s : s.slice(0, maxChars-1) + "…";
+}
+function hitTestMap(node, mx, my){
+  const r = node.rect;
+  if (!r || mx < r.x || mx > r.x+r.w || my < r.y || my > r.y+r.h) return null;
+  if (node.isFile || node.solid) return node;
+  if (node.hasHeader && my <= r.y + HEADER && node !== currentRoot) return node;
+  for (const k of node.kids){ const hit = hitTestMap(k, mx, my); if (hit) return hit; }
+  return node;
+}
+function relayoutMap(){
+  if (!currentRoot) return;
+  const rect = cvsMap.getBoundingClientRect();
+  layoutNode(currentRoot, 0, 0, rect.width, rect.height, 0);
+  drawMap(); renderBreadcrumb(); renderOverview();
+}
+function zoomTo(node){
+  while (node && node.isFile) node = node.parent;
+  if (!node) return;
+  currentRoot = node; hoverNode = null; relayoutMap();
+}
+function renderBreadcrumb(){
+  const bc = $("breadcrumb"); bc.innerHTML = "";
+  if (!currentRoot) return;
+  const chain = [];
+  for (let n = currentRoot; n; n = n.parent) chain.unshift(n);
+  chain.forEach((n, i) => {
+    if (i){ const sep = document.createElement("span"); sep.className = "sep"; sep.textContent = "›"; bc.appendChild(sep); }
+    const el = document.createElement("span");
+    el.className = "crumb" + (i === chain.length-1 ? " last" : "");
+    el.textContent = n.name;
+    if (i < chain.length-1) el.onclick = () => zoomTo(n);
+    bc.appendChild(el);
+  });
+}
+
+/* ================= sidebar: overview / largest ================= */
+function collectFiles(node, out){
+  if (node.isFile){ out.push(node); return; }
+  for (const k of node.kids) collectFiles(k, out);
+}
+function renderOverview(){
+  if (!currentRoot) return;
+  const nodes = [];
+  collectFiles(currentRoot, nodes);
+  $("summary").innerHTML =
+    `<b>${escapeHtml(currentRoot.path || currentRoot.name)}</b><br>` +
+    `${fmtInt(nodes.length)} files · ${humanSize(currentRoot.size)}` +
+    (indexed ? `<br><span style="color:var(--ok)">indexed ✓</span> <span style="color:var(--dim)">${fmtInt(edgeCount())} dependency links</span>` : "");
+  const agg = new Map();
+  for (const f of nodes){
+    const key = f.lang[0];
+    const cur = agg.get(key) || {size:0, color:f.lang[1]};
+    cur.size += f.size; agg.set(key, cur);
+  }
+  const total = Math.max(currentRoot.size, 1);
+  const sorted = [...agg.entries()].sort((a,b) => b[1].size - a[1].size);
+  const top = sorted.slice(0, 11);
+  const restSize = sorted.slice(11).reduce((s,e) => s + e[1].size, 0);
+  const bar = $("langBar"), list = $("langList");
+  bar.innerHTML = ""; list.innerHTML = "";
+  for (const [nm, v] of top){
+    const seg = document.createElement("div");
+    seg.style.width = (v.size/total*100) + "%"; seg.style.background = v.color;
+    bar.appendChild(seg);
+    const row = document.createElement("div"); row.className = "langRow";
+    row.innerHTML = `<span class="dot" style="background:${v.color}"></span>` +
+      `<span class="nm">${escapeHtml(nm)}</span>` +
+      `<span class="pc">${(v.size/total*100).toFixed(1)}% · ${humanSize(v.size)}</span>`;
+    list.appendChild(row);
+  }
+  if (restSize > 0){
+    const row = document.createElement("div"); row.className = "langRow";
+    row.innerHTML = `<span class="dot" style="background:#57606a"></span><span class="nm">other</span><span class="pc">${(restSize/total*100).toFixed(1)}%</span>`;
+    list.appendChild(row);
+  }
+  nodes.sort((a,b) => b.size - a.size);
+  const bigEl = $("bigFiles"); bigEl.innerHTML = "";
+  for (const f of nodes.slice(0, 12)){
+    const row = document.createElement("div"); row.className = "fileRow";
+    const rel = currentRoot.path && f.path.startsWith(currentRoot.path + "/") ? f.path.slice(currentRoot.path.length+1) : f.path;
+    row.innerHTML = `<span class="fp">${escapeHtml(rel)}</span><span class="fs">${humanSize(f.size)}</span>`;
+    row.onclick = () => { openViewer(f.fileId); };
+    bigEl.appendChild(row);
+  }
+}
+function edgeCount(){ let n = 0; for (const m of edgesOut) n += m.size; return n; }
+
+/* ================= indexing (local folders) ================= */
+async function getText(id){
+  if (contents[id] != null) return contents[id];
+  const f = files[id];
+  if (f.file){
+    const t = await f.file.text();
+    contents[id] = t;
+    return t;
+  }
+  if (gh){
+    const url = `https://raw.githubusercontent.com/${gh.owner}/${gh.repo}/${gh.branch}/${f.path}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("raw fetch " + res.status);
+    const t = await res.text();
+    contents[id] = t;
+    return t;
+  }
+  throw new Error("no content source");
+}
+function indexable(f){
+  const base = f.path.slice(f.path.lastIndexOf("/")+1);
+  const ext = extOf(base);
+  if (BINARY_EXT.has(ext)) return false;
+  if (f.size > 2*1024*1024 || f.size === 0) return false;
+  return true;
+}
+async function buildIndex(){
+  if (indexing) return;
+  indexing = true;
+  updateGraphEmpty();
+  const t0 = performance.now();
+  const todo = [];
+  files.forEach((f, id) => { if (indexable(f) && (f.file || contents[id] != null)) todo.push(id); });
+  // pass 1: read contents (skips files whose content is already in memory)
+  setStatus(`Indexing ${rootName}: reading ${fmtInt(todo.length)} text files…`);
+  for (let i = 0; i < todo.length; i += 60){
+    const batch = todo.slice(i, i+60);
+    await Promise.all(batch.map(async id => {
+      if (contents[id] != null || !files[id].file) return;
+      try {
+        const t = await files[id].file.text();
+        contents[id] = t.slice(0, 2000) .includes("\0") ? null : t;
+      } catch { contents[id] = null; }
+    }));
+    setProgress((i+batch.length)/todo.length * 0.55);
+    if (i % 600 === 0) await yieldUI();
+  }
+  // pass 2: extract references
+  setStatus(`Indexing ${rootName}: extracting dependencies…`);
+  await yieldUI();
+  let done = 0;
+  for (const id of todo){
+    if (contents[id] != null){
+      try { extractRefs(id); } catch {}
+    }
+    done++;
+    if (done % 120 === 0){ setProgress(0.55 + done/todo.length*0.45); await yieldUI(); }
+  }
+  setProgress(null);
+  indexed = true; indexing = false;
+  const secs = ((performance.now()-t0)/1000).toFixed(1);
+  setStatus(`${rootName} — ${fmtInt(files.length)} files · ${fmtInt(edgeCount())} dependency links indexed in ${secs}s (cached for next time)`);
+  renderOverview(); renderHubs(); updateGraphEmpty();
+  saveCache().catch(() => setStatus($("statusText").textContent + " — (too big for browser cache, index kept in memory)"));
+  graph.built = false;
+  if (activeView === "graph") buildGraph();
+}
+function addEdge(from, to, kind, line){
+  if (to == null || to === from) return;
+  if (line){
+    const k = from + "|" + to;
+    let ev = edgeEvidence.get(k);
+    if (!ev){ ev = []; edgeEvidence.set(k, ev); }
+    if (ev.length < 6 && !ev.includes(line)) ev.push(line);
+  }
+  const cur = edgesOut[from].get(to);
+  if (cur === "imp") return;
+  if (cur === "ref" && kind === "ref") return;
+  edgesOut[from].set(to, kind === "imp" ? "imp" : (cur || kind));
+  edgesIn[to].set(from, edgesOut[from].get(to));
+}
+function lineStarts(t){
+  const s = [0];
+  for (let i = 0; i < t.length; i++) if (t.charCodeAt(i) === 10) s.push(i+1);
+  return s;
+}
+function lineAt(starts, idx){
+  let lo = 0, hi = starts.length - 1;
+  while (lo < hi){ const mid = (lo + hi + 1) >> 1; if (starts[mid] <= idx) lo = mid; else hi = mid - 1; }
+  return lo + 1;
+}
+function lineText(id, line){
+  const t = contents[id];
+  if (t == null || !line) return "";
+  let pos = 0;
+  for (let i = 1; i < line; i++){ pos = t.indexOf("\n", pos) + 1; if (pos <= 0) return ""; }
+  let end = t.indexOf("\n", pos); if (end < 0) end = t.length;
+  return t.slice(pos, Math.min(end, pos + 200)).trim();
+}
+function resolveSuffix(cand){
+  const exact = pathToId.get(cand);
+  if (exact != null) return exact;
+  const base = cand.slice(cand.lastIndexOf("/")+1).toLowerCase();
+  const ids = byBase.get(base);
+  if (!ids) return null;
+  let best = null;
+  for (const i of ids){
+    const p = files[i].path;
+    if (p === cand || p.endsWith("/"+cand)){
+      if (best === null || p.length < files[best].path.length) best = i;
+    }
+  }
+  return best;
+}
+function dirOf(p){ const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
+function normPath(p){
+  const out = [];
+  for (const seg of p.split("/")){
+    if (seg === "" || seg === ".") continue;
+    if (seg === ".."){ out.pop(); continue; }
+    out.push(seg);
+  }
+  return out.join("/");
+}
+const PY_EXTS = new Set(["py","pyi","pyx","pxd"]);
+const JS_EXTS = new Set(["js","mjs","cjs","ts","tsx","jsx","vue","svelte"]);
+const C_EXTS = new Set(["c","h","hpp","hh","cc","cpp","cxx","inl","cu","cuh"]);
+function extractRefs(id){
+  const text = contents[id], f = files[id];
+  const ext = extOf(f.path);
+  const starts = lineStarts(text);
+  if (PY_EXTS.has(ext)) pyImports(text, f, id, starts);
+  else if (JS_EXTS.has(ext)) jsImports(text, f, id, starts);
+  else if (C_EXTS.has(ext)) cIncludes(text, f, id, starts);
+  genericRefs(text, f, id, starts);
+}
+function resolvePyModule(mod, f){
+  const dots = (mod.match(/^\.+/) || [""])[0].length;
+  const parts = mod.replace(/^\.+/, "").split(".").filter(Boolean);
+  if (dots > 0){
+    let base = dirOf(f.path);
+    for (let i = 1; i < dots; i++) base = dirOf(base);
+    if (!parts.length) return null;
+    const stem = (base ? base + "/" : "") + parts.join("/");
+    return pathToId.get(stem + ".py") ?? pathToId.get(stem + "/__init__.py") ?? null;
+  }
+  if (!parts.length) return null;
+  const stem = parts.join("/");
+  return resolveSuffix(stem + ".py") ?? resolveSuffix(stem + "/__init__.py") ?? null;
+}
+function pyImports(text, f, id, starts){
+  const re = /^[ \t]*(?:from[ \t]+([.\w]+)[ \t]+import[ \t]+([\w.,* \t()]+)|import[ \t]+([\w., \t]+))/gm;
+  let m, n = 0;
+  while ((m = re.exec(text)) && n++ < 400){
+    const line = lineAt(starts, m.index);
+    if (m[3]){ // plain: import a.b, c.d
+      for (const mod of m[3].split(",").map(s => s.trim().split(/[ \t]/)[0]).filter(Boolean)){
+        const t = resolvePyModule(mod, f);
+        if (t != null) addEdge(id, t, "imp", line);
+      }
+      continue;
+    }
+    // from MOD import a, b — each name may itself be a submodule (from . import model)
+    const mod = m[1];
+    const names = m[2].replace(/[()*]/g, "").split(",").map(s => s.trim().split(/[ \t]/)[0]).filter(Boolean);
+    let any = false;
+    for (const nm of names.slice(0, 20)){
+      const t = resolvePyModule(mod === "." || mod.endsWith(".") ? mod + nm : mod + "." + nm, f);
+      if (t != null){ addEdge(id, t, "imp", line); any = true; }
+    }
+    if (!any){
+      const t = resolvePyModule(mod, f);
+      if (t != null) addEdge(id, t, "imp", line);
+    }
+  }
+}
+const JS_RESOLVE_EXTS = ["", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json"];
+function jsImports(text, f, id, starts){
+  const re = /(?:import|export)\s[^'"`;]*?from\s*['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)|import\(\s*['"]([^'"]+)['"]\s*\)|^\s*import\s*['"]([^'"]+)['"]/gm;
+  let m, n = 0;
+  while ((m = re.exec(text)) && n++ < 400){
+    const spec = m[1] || m[2] || m[3] || m[4];
+    if (!spec || (!spec.startsWith("./") && !spec.startsWith("../"))) continue;
+    const base = normPath(dirOf(f.path) + "/" + spec);
+    let target = null;
+    for (const e of JS_RESOLVE_EXTS){
+      target = pathToId.get(base + e); if (target != null) break;
+      target = pathToId.get(base + "/index" + (e || ".js")); if (target != null) break;
+    }
+    if (target != null) addEdge(id, target, "imp", lineAt(starts, m.index));
+  }
+}
+function cIncludes(text, f, id, starts){
+  const re = /^[ \t]*#[ \t]*include[ \t]*["<]([^">]+)[">]/gm;
+  let m, n = 0;
+  while ((m = re.exec(text)) && n++ < 400){
+    const spec = m[1];
+    let target = pathToId.get(normPath(dirOf(f.path) + "/" + spec));
+    if (target == null) target = resolveSuffix(spec.replace(/^\.\//, ""));
+    if (target != null) addEdge(id, target, "imp", lineAt(starts, m.index));
+  }
+}
+function genericRefs(text, f, id, starts){
+  const re = /[A-Za-z0-9_@][A-Za-z0-9_@.\/\-]*\.[A-Za-z][A-Za-z0-9_]{0,7}\b/g;
+  let m, n = 0, added = 0;
+  const selfBase = f.path.slice(f.path.lastIndexOf("/")+1).toLowerCase();
+  while ((m = re.exec(text)) && n++ < 6000 && added < 150){
+    let cand = m[0].replace(/^\.\//, "");
+    const candBase = cand.slice(cand.lastIndexOf("/")+1).toLowerCase();
+    if (candBase === selfBase && !cand.includes("/")) continue;
+    if (!LANGS[extOf(candBase)] && !byBase.has(candBase)) continue;
+    let target = null;
+    if (cand.includes("/")){
+      target = resolveSuffix(cand);
+      if (target == null && (cand.startsWith("../") || m[0].startsWith("./")))
+        target = pathToId.get(normPath(dirOf(f.path) + "/" + m[0]));
+    } else {
+      const ids = byBase.get(candBase);
+      if (ids && ids.length === 1) target = ids[0];
+      else if (ids){ // same-dir mention wins
+        const dir = dirOf(f.path);
+        for (const i of ids) if (dirOf(files[i].path) === dir){ target = i; break; }
+      }
+    }
+    if (target != null && target !== id){ addEdge(id, target, "ref", lineAt(starts, m.index)); added++; }
+  }
+}
+
+/* ================= dependency graph ================= */
+const graph = {
+  nodes: [], links: [], byKey: new Map(),
+  expanded: new Set(), mode: "folders", ego: null, egoHops: 1,
+  sel: null, view: {tx:0, ty:0, k:1}, alpha: 0, built: false,
+  drag: null, panning: false, hover: null, spawnHint: null,
+};
+function groupOf(path, cache){
+  if (cache.has(path)) return cache.get(path);
+  const parts = path.split("/");
+  let cur = "", group = path;
+  for (let i = 0; i < parts.length; i++){
+    const nxt = cur ? cur + "/" + parts[i] : parts[i];
+    if (dirSet.has(nxt)){
+      if (graph.expanded.has(nxt)){ cur = nxt; continue; }
+      group = nxt; break;
+    }
+    group = nxt; break;
+  }
+  cache.set(path, group);
+  return group;
+}
+function buildGraph(keepPositions){
+  const showImp = $("gImports").checked, showRef = $("gRefs").checked;
+  const old = keepPositions ? new Map(graph.nodes.map(nd => [nd.key, nd])) : new Map();
+  const nodesBy = new Map();
+  const rect = cvsGraph.getBoundingClientRect();
+  const cx = rect.width/2, cy = rect.height/2;
+  function ensureNode(key, isFile, fileId){
+    let nd = nodesBy.get(key);
+    if (!nd){
+      const o = old.get(key);
+      const hint = graph.spawnHint;
+      let px, py;
+      if (o){ px = o.x; py = o.y; }
+      else if (hint && (key === hint.prefix || key.startsWith(hint.prefix + "/"))){
+        // burst out of the folder that was just expanded/collapsed
+        px = hint.x + (Math.random()-0.5)*80;
+        py = hint.y + (Math.random()-0.5)*80;
+      } else {
+        px = cx + (Math.random()-0.5)*rect.width*0.7;
+        py = cy + (Math.random()-0.5)*rect.height*0.7;
+      }
+      nd = {key, isFile, fileId: fileId ?? null,
+        label: isFile ? key.slice(key.lastIndexOf("/")+1) : key.slice(key.lastIndexOf("/")+1) + "/",
+        size:0, count:0, color:"#6e7681", inN:0, outN:0,
+        x: px, y: py, vx:0, vy:0, r:8};
+      nodesBy.set(key, nd);
+    }
+    return nd;
+  }
+  const linksBy = new Map();
+  function addLink(a, b, kind){
+    if (a === b) return;
+    const k = a + "\0" + b;
+    let l = linksBy.get(k);
+    if (!l){ l = {s:a, t:b, imp:0, ref:0}; linksBy.set(k, l); }
+    l[kind]++;
+  }
+  if (graph.mode === "ego" && graph.ego != null){
+    const seen = new Set([graph.ego]);
+    let frontier = [graph.ego];
+    for (let hop = 0; hop < graph.egoHops; hop++){
+      const next = [];
+      for (const id of frontier){
+        for (const [to, kind] of edgesOut[id]){
+          if ((kind === "imp" && !showImp) || (kind === "ref" && !showRef)) continue;
+          if (!seen.has(to) && seen.size < 220){ seen.add(to); next.push(to); }
+        }
+        for (const [from, kind] of edgesIn[id]){
+          if ((kind === "imp" && !showImp) || (kind === "ref" && !showRef)) continue;
+          if (!seen.has(from) && seen.size < 220){ seen.add(from); next.push(from); }
+        }
+      }
+      frontier = next;
+    }
+    for (const id of seen){
+      const nd = ensureNode(files[id].path, true, id);
+      nd.size = files[id].size; nd.count = 1; nd.color = files[id].lang[1];
+    }
+    for (const id of seen){
+      for (const [to, kind] of edgesOut[id]){
+        if (!seen.has(to)) continue;
+        if ((kind === "imp" && !showImp) || (kind === "ref" && !showRef)) continue;
+        addLink(files[id].path, files[to].path, kind === "imp" ? "imp" : "ref");
+      }
+    }
+  } else {
+    const cache = new Map();
+    files.forEach((f, id) => {
+      const g = groupOf(f.path, cache);
+      const isFile = g === f.path;
+      const nd = ensureNode(g, isFile, isFile ? id : null);
+      nd.size += f.size; nd.count++;
+      if (isFile) nd.color = f.lang[1];
+    });
+    // dominant color for folders
+    const colorAgg = new Map();
+    files.forEach(f => {
+      const g = cache.get(f.path);
+      if (g === f.path) return;
+      let ca = colorAgg.get(g);
+      if (!ca){ ca = new Map(); colorAgg.set(g, ca); }
+      ca.set(f.lang[1], (ca.get(f.lang[1]) || 0) + f.size);
+    });
+    for (const [g, ca] of colorAgg){
+      let best = null, bs = -1;
+      for (const [c, s] of ca) if (s > bs){ bs = s; best = c; }
+      nodesBy.get(g).color = best;
+    }
+    files.forEach((f, id) => {
+      const ga = cache.get(f.path);
+      for (const [to, kind] of edgesOut[id]){
+        if ((kind === "imp" && !showImp) || (kind === "ref" && !showRef)) continue;
+        const gb = cache.get(files[to].path);
+        addLink(ga, gb, kind === "imp" ? "imp" : "ref");
+      }
+    });
+  }
+  graph.nodes = [...nodesBy.values()];
+  graph.byKey = nodesBy;
+  graph.links = [...linksBy.values()].map(l => ({...l, sn:nodesBy.get(l.s), tn:nodesBy.get(l.t)}));
+  for (const l of graph.links){ l.sn.outN += l.imp + l.ref; l.tn.inN += l.imp + l.ref; }
+  if ($("gIso").checked && graph.mode !== "ego"){
+    const connected = new Set();
+    for (const l of graph.links){ connected.add(l.s); connected.add(l.t); }
+    graph.nodes = graph.nodes.filter(nd => connected.has(nd.key));
+  }
+  // duplicate short names (e.g. several core/) get their parent path prefixed
+  const byLabel = new Map();
+  for (const nd of graph.nodes){
+    if (!byLabel.has(nd.label)) byLabel.set(nd.label, []);
+    byLabel.get(nd.label).push(nd);
+  }
+  for (const arr of byLabel.values()){
+    if (arr.length < 2) continue;
+    for (const nd of arr){
+      const parts = nd.key.split("/");
+      if (parts.length >= 2)
+        nd.label = (parts.length > 2 ? "…/" : "") + parts.slice(-2).join("/") + (nd.isFile ? "" : "/");
+    }
+  }
+  graph.spawnHint = null;
+  const maxSize = Math.max(1, ...graph.nodes.map(nd => nd.size));
+  for (const nd of graph.nodes)
+    nd.r = nd.isFile ? Math.max(6, 5 + 14*Math.sqrt(nd.size/maxSize))
+                     : Math.max(10, 8 + 22*Math.sqrt(nd.size/maxSize));
+  graph.built = true;
+  graph.alpha = 0.9;
+  $("gBack").style.display = graph.mode === "ego" ? "" : "none";
+  $("gHop").style.display = graph.mode === "ego" && graph.egoHops < 2 ? "" : "none";
+  runSim();
+  updateGraphEmpty();
+}
+let simTimer = null;
+function runSim(){
+  if (simTimer) return;
+  const step = () => {
+    simTick();
+    drawGraph();
+    if (graph.alpha > 0.02 || graph.drag){ simTimer = requestAnimationFrame(step); }
+    else simTimer = null;
+  };
+  simTimer = requestAnimationFrame(step);
+}
+function simTick(){
+  const nodes = graph.nodes, links = graph.links;
+  const rect = cvsGraph.getBoundingClientRect();
+  const cx = rect.width/2, cy = rect.height/2;
+  const a = graph.alpha;
+  // repulsion
+  for (let i = 0; i < nodes.length; i++){
+    const n1 = nodes[i];
+    for (let j = i+1; j < nodes.length; j++){
+      const n2 = nodes[j];
+      let dx = n1.x - n2.x, dy = n1.y - n2.y;
+      let d2 = dx*dx + dy*dy;
+      if (d2 < 1){ dx = Math.random()-0.5; dy = Math.random()-0.5; d2 = 1; }
+      const d = Math.sqrt(d2);
+      const rep = 1800 * a * (n1.r + n2.r) / d2;
+      const fx = dx/d * rep, fy = dy/d * rep;
+      n1.vx += fx; n1.vy += fy; n2.vx -= fx; n2.vy -= fy;
+    }
+  }
+  // springs
+  for (const l of links){
+    const rest = 55 + l.sn.r + l.tn.r;
+    let dx = l.tn.x - l.sn.x, dy = l.tn.y - l.sn.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const k = 0.028 * a * (d - rest) / d;
+    const fx = dx*k, fy = dy*k;
+    l.sn.vx += fx; l.sn.vy += fy; l.tn.vx -= fx; l.tn.vy -= fy;
+  }
+  // gravity + integrate
+  for (const nd of nodes){
+    nd.vx += (cx - nd.x) * 0.012 * a;
+    nd.vy += (cy - nd.y) * 0.012 * a;
+    if (graph.drag && graph.drag.node === nd){ nd.vx = 0; nd.vy = 0; continue; }
+    nd.vx *= 0.85; nd.vy *= 0.85;
+    const vmax = 14;
+    nd.x += Math.max(-vmax, Math.min(vmax, nd.vx));
+    nd.y += Math.max(-vmax, Math.min(vmax, nd.vy));
+  }
+  graph.alpha *= 0.985;
+}
+function drawGraph(){
+  const rect = cvsGraph.getBoundingClientRect();
+  gctx.clearRect(0, 0, rect.width, rect.height);
+  const v = graph.view;
+  gctx.save();
+  gctx.translate(v.tx, v.ty); gctx.scale(v.k, v.k);
+  const selN = graph.sel ? graph.byKey.get(graph.sel) : null;
+  const nbr = new Set();
+  if (selN){
+    nbr.add(selN.key);
+    for (const l of graph.links){
+      if (l.sn === selN) nbr.add(l.tn.key);
+      if (l.tn === selN) nbr.add(l.sn.key);
+    }
+  }
+  const grepDim = matchedFiles || searchTerm;
+  function nodeDim(nd){
+    if (selN) return !nbr.has(nd.key);
+    if (!grepDim) return false;
+    if (nd.isFile){
+      if (matchedFiles) return !matchedFiles.has(nd.fileId);
+      return !nd.key.toLowerCase().includes(searchTerm);
+    }
+    // folder: dim unless any matched file inside
+    if (matchedFiles){
+      for (const id of matchedFiles) if (files[id].path.startsWith(nd.key + "/")) return false;
+      return true;
+    }
+    return !nd.key.toLowerCase().includes(searchTerm);
+  }
+  // links
+  for (const l of graph.links){
+    const dim = selN ? !(l.sn === selN || l.tn === selN) : (nodeDim(l.sn) || nodeDim(l.tn));
+    gctx.globalAlpha = dim ? 0.06 : 0.55;
+    const w = Math.min(4, 0.6 + Math.log2(1 + l.imp + l.ref) * 0.7) / v.k;
+    const impMain = l.imp >= l.ref;
+    gctx.strokeStyle = impMain ? "#58a6ff" : "#8b949e";
+    gctx.setLineDash(impMain ? [] : [5/v.k, 4/v.k]);
+    gctx.lineWidth = w;
+    const dx = l.tn.x - l.sn.x, dy = l.tn.y - l.sn.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const sx = l.sn.x + dx/d*l.sn.r, sy = l.sn.y + dy/d*l.sn.r;
+    const ex = l.tn.x - dx/d*(l.tn.r+3), ey = l.tn.y - dy/d*(l.tn.r+3);
+    gctx.beginPath(); gctx.moveTo(sx, sy); gctx.lineTo(ex, ey); gctx.stroke();
+    // arrowhead
+    gctx.setLineDash([]);
+    const ah = Math.max(4, 6/v.k);
+    const ang = Math.atan2(dy, dx);
+    gctx.fillStyle = gctx.strokeStyle;
+    gctx.beginPath();
+    gctx.moveTo(ex + Math.cos(ang)*ah, ey + Math.sin(ang)*ah);
+    gctx.lineTo(ex + Math.cos(ang+2.5)*ah, ey + Math.sin(ang+2.5)*ah);
+    gctx.lineTo(ex + Math.cos(ang-2.5)*ah, ey + Math.sin(ang-2.5)*ah);
+    gctx.fill();
+  }
+  gctx.setLineDash([]);
+  // nodes
+  gctx.textAlign = "center"; gctx.textBaseline = "top";
+  for (const nd of graph.nodes){
+    const dim = nodeDim(nd);
+    gctx.globalAlpha = dim ? 0.14 : 1;
+    gctx.beginPath();
+    gctx.arc(nd.x, nd.y, nd.r, 0, Math.PI*2);
+    gctx.fillStyle = nd.color;
+    gctx.fill();
+    if (!nd.isFile){
+      gctx.lineWidth = 2/v.k; gctx.strokeStyle = "rgba(230,237,243,.7)"; gctx.stroke();
+    }
+    if (nd === graph.hover || (selN && nd === selN)){
+      gctx.lineWidth = 2.5/v.k; gctx.strokeStyle = "#58a6ff"; gctx.stroke();
+    }
+    const showLabel = !nd.isFile || nd.r*v.k > 5 || graph.nodes.length < 90;
+    if (showLabel && !dim){
+      const fs = Math.max(10/v.k, Math.min(13/v.k, nd.r*0.6));
+      gctx.font = (nd.isFile ? "" : "600 ") + fs + "px 'Segoe UI',sans-serif";
+      gctx.fillStyle = "#c9d5e1";
+      gctx.fillText(nd.label.length > 28 ? nd.label.slice(0,27)+"…" : nd.label, nd.x, nd.y + nd.r + 3/v.k);
+    }
+  }
+  gctx.restore();
+}
+function graphWorld(mx, my){
+  const v = graph.view;
+  return [(mx - v.tx)/v.k, (my - v.ty)/v.k];
+}
+function graphHit(mx, my){
+  const [wx, wy] = graphWorld(mx, my);
+  for (let i = graph.nodes.length-1; i >= 0; i--){
+    const nd = graph.nodes[i];
+    const dx = wx - nd.x, dy = wy - nd.y;
+    if (dx*dx + dy*dy <= (nd.r+2)*(nd.r+2)) return nd;
+  }
+  return null;
+}
+function egoGraph(fileId){
+  graph.mode = "ego"; graph.ego = fileId; graph.egoHops = 1;
+  graph.sel = files[fileId].path;
+  switchView("graph");
+  buildGraph();
+  renderSelection(graph.byKey.get(files[fileId].path));
+}
+function renderSelection(nd){
+  const sec = $("secSel"), body = $("selBody");
+  if (!nd){ sec.style.display = "none"; return; }
+  sec.style.display = "";
+  let html = `<div style="font-family:Consolas,monospace;font-size:12px;word-break:break-all;color:var(--accent)">${escapeHtml(nd.key)}${nd.isFile?"":"/"}</div>` +
+    `<div style="color:var(--dim);font-size:12px;margin:3px 0 8px">${nd.isFile ? humanSize(nd.size) : fmtInt(nd.count)+" files · "+humanSize(nd.size)}` +
+    (nd.isFile ? ` · <span style="cursor:pointer;color:var(--accent)" id="selOpen">open code</span> · <span style="cursor:pointer;color:var(--accent)" id="selEgo">deps graph</span>` : "") + `</div>`;
+  const outs = [], ins = [];
+  for (const l of graph.links){
+    if (l.sn === nd) outs.push([l.tn, l.imp + l.ref]);
+    if (l.tn === nd) ins.push([l.sn, l.imp + l.ref]);
+  }
+  outs.sort((a,b) => b[1]-a[1]); ins.sort((a,b) => b[1]-a[1]);
+  const rowFor = dir => ([n2, c]) => {
+    let title = "";
+    if (nd.isFile && n2.isFile && nd.fileId != null && n2.fileId != null){
+      const ev = edgeEvidence.get(dir === "out" ? nd.fileId + "|" + n2.fileId : n2.fileId + "|" + nd.fileId);
+      if (ev && ev.length){
+        const holder = dir === "out" ? nd.fileId : n2.fileId;
+        title = ` title="L${ev[0]}: ${escapeHtml(lineText(holder, ev[0]))}"`;
+      }
+    }
+    return `<div class="fileRow" data-k="${escapeHtml(n2.key)}"${title}><span class="fp">${escapeHtml(n2.label)}</span><span class="fs">${c}</span></div>`;
+  };
+  html += `<div style="font-size:12px;color:var(--dim);margin-top:6px">depends on → (${outs.length})</div>` + outs.slice(0,20).map(rowFor("out")).join("");
+  html += `<div style="font-size:12px;color:var(--dim);margin-top:8px">← used by (${ins.length})</div>` + ins.slice(0,20).map(rowFor("in")).join("");
+  body.innerHTML = html;
+  body.querySelectorAll(".fileRow").forEach(el => {
+    el.onclick = () => {
+      const k = el.getAttribute("data-k");
+      const n2 = graph.byKey.get(k);
+      if (n2){ graph.sel = k; drawGraph(); renderSelection(n2); }
+    };
+  });
+  const so = $("selOpen"), se = $("selEgo");
+  if (so) so.onclick = () => openViewer(nd.fileId);
+  if (se) se.onclick = () => egoGraph(nd.fileId);
+}
+function renderHubs(){
+  if (!indexed){ $("secHubs").style.display = "none"; return; }
+  const deg = files.map((f, id) => [id, edgesIn[id].size]).filter(x => x[1] > 0);
+  deg.sort((a,b) => b[1]-a[1]);
+  const el = $("hubBody"); el.innerHTML = "";
+  for (const [id, n] of deg.slice(0, 12)){
+    const row = document.createElement("div"); row.className = "fileRow";
+    row.innerHTML = `<span class="fp">${escapeHtml(files[id].path)}</span><span class="fs">← ${n}</span>`;
+    row.onclick = () => egoGraph(id);
+    el.appendChild(row);
+  }
+  $("secHubs").style.display = deg.length ? "" : "none";
+}
+
+/* ================= code viewer ================= */
+const HL_COMMENT = {py:"#", sh:"#", bash:"#", zsh:"#", yaml:"#", yml:"#", toml:"#", cfg:"#", ini:"#", conf:"#", ps1:"#", psm1:"#", r:"#", cmake:"#", mk:"#", dockerfile:"#",
+  js:"//", mjs:"//", cjs:"//", ts:"//", tsx:"//", jsx:"//", c:"//", h:"//", hpp:"//", hh:"//", cc:"//", cpp:"//", cxx:"//", cu:"//", cuh:"//", rs:"//", go:"//", java:"//", kt:"//", scala:"//", swift:"//", cs:"//", proto:"//", php:"//"};
+function hlLine(escLine, cm){
+  // strings
+  let out = escLine.replace(/(&quot;.*?&quot;|'[^']*'|`[^`]*`)/g, '<span class="st">$1</span>');
+  if (cm){
+    const idx = cm === "#" ? out.search(/#(?![0-9a-fA-F]{3,8}\b)/) : out.indexOf("//");
+    if (idx >= 0 && !out.slice(0, idx).includes('<span class="st">'))
+      out = out.slice(0, idx) + '<span class="cm">' + out.slice(idx).replace(/<[^>]*>/g, "") + '</span>';
+  }
+  return out;
+}
+async function openViewer(fileId, line){
+  if (fileId == null) return;
+  viewerFileId = fileId;
+  const f = files[fileId];
+  $("vTitle").textContent = f.path;
+  $("vMeta").textContent = f.lang[0] + " · " + humanSize(f.size);
+  $("viewer").classList.add("open");
+  $("vBody").innerHTML = '<div style="padding:14px;color:var(--dim)">loading…</div>';
+  // deps chips
+  const depEl = $("vDeps");
+  if (indexed && (edgesOut[fileId].size || edgesIn[fileId].size)){
+    // each row proves the edge: the line where the reference actually happens
+    const rows = (pairs, dir) => pairs.slice(0, 20).map(([i, kind]) => {
+      const ev = edgeEvidence.get(dir === "out" ? fileId + "|" + i : i + "|" + fileId) || [];
+      const line = ev[0] || 0;
+      const holder = dir === "out" ? fileId : i;   // reference lines live in the FROM file
+      const snip = line ? escapeHtml(lineText(holder, line)) : "";
+      return `<div class="depRow" data-id="${i}" data-line="${line}" data-dir="${dir}" title="${escapeHtml(files[i].path)}">` +
+        `<span class="chip ${kind === "ref" ? "ref" : ""}" data-open="1">${escapeHtml(files[i].path.slice(files[i].path.lastIndexOf("/")+1))}</span>` +
+        (line ? `<span class="dl">L${line}${ev.length > 1 ? " +" + (ev.length-1) : ""}</span><span class="ds">${snip}</span>` : "") +
+        `</div>`;
+    }).join("");
+    const outs = [...edgesOut[fileId]], ins = [...edgesIn[fileId]];
+    let html = "";
+    if (outs.length)
+      html += `<div class="depcol"><span class="lbl">depends on → (${outs.length}${outs.length > 20 ? ", showing 20" : ""}) <span class="hint">click the line to jump to the reference · click the name to open the file</span></span>${rows(outs, "out")}</div>`;
+    if (ins.length)
+      html += `<div class="depcol"><span class="lbl">← used by (${ins.length}${ins.length > 20 ? ", showing 20" : ""}) <span class="hint">click to open that file at the referencing line</span></span>${rows(ins, "in")}</div>`;
+    depEl.innerHTML = html; depEl.style.display = "block";
+    depEl.querySelectorAll(".depRow").forEach(el => {
+      const tid = +el.getAttribute("data-id");
+      const ln = +el.getAttribute("data-line") || null;
+      const dir = el.getAttribute("data-dir");
+      el.onclick = ev2 => {
+        if (dir === "in"){ openViewer(tid, ln || undefined); return; }        // reference lives in the other file
+        if (ev2.target.closest("[data-open]") || !ln){ openViewer(tid); return; } // name chip opens the dependency
+        flashLine(ln);                                                        // reference lives right here
+      };
+    });
+  } else { depEl.style.display = "none"; }
+  let text;
+  try { text = await getText(fileId); }
+  catch (e){ $("vBody").innerHTML = `<div style="padding:14px;color:var(--danger)">could not load content (${escapeHtml(e.message)})</div>`; return; }
+  if (text == null){ $("vBody").innerHTML = '<div style="padding:14px;color:var(--dim)">binary or unreadable file</div>'; return; }
+  const term = $("searchMode").value === "content" ? $("searchInput").value.trim() : "";
+  const termRe = term ? new RegExp(escapeReg(escapeHtml(term)), "gi") : null;
+  const cm = HL_COMMENT[extOf(f.path)] || (f.path.toLowerCase().includes("dockerfile") ? "#" : null);
+  const lines = text.split("\n");
+  const cap = 8000;
+  const out = [];
+  for (let i = 0; i < Math.min(lines.length, cap); i++){
+    let esc = escapeHtml(lines[i]);
+    esc = hlLine(esc, cm);
+    let hit = false;
+    if (termRe){
+      termRe.lastIndex = 0;
+      if (termRe.test(esc.replace(/<[^>]*>/g, ""))){
+        hit = true;
+        esc = esc.replace(new RegExp("(" + escapeReg(escapeHtml(term)) + ")(?![^<]*>)", "gi"), "<mark>$1</mark>");
+      }
+    }
+    out.push(`<div class="ln${hit?" hitline":""}" id="L${i+1}"><span class="no">${i+1}</span><span class="ct">${esc || " "}</span></div>`);
+  }
+  if (lines.length > cap) out.push(`<div style="padding:10px 60px;color:var(--dim)">… ${fmtInt(lines.length-cap)} more lines truncated …</div>`);
+  $("vBody").innerHTML = out.join("");
+  if (line){
+    const el = document.getElementById("L" + line);
+    if (el){ el.scrollIntoView({block:"center"}); el.style.background = "rgba(88,166,255,.25)"; }
+  } else $("vBody").scrollTop = 0;
+}
+function flashLine(line){
+  const el = document.getElementById("L" + line);
+  if (!el) return;
+  el.scrollIntoView({block:"center"});
+  el.style.transition = "background .2s";
+  el.style.background = "rgba(88,166,255,.35)";
+  setTimeout(() => { el.style.background = ""; }, 1600);
+}
+$("vClose").onclick = () => { $("viewer").classList.remove("open"); viewerFileId = null; };
+$("vGraph").onclick = () => { if (viewerFileId != null){ $("viewer").classList.remove("open"); egoGraph(viewerFileId); } };
+
+/* ================= search ================= */
+function runContentSearch(){
+  const term = $("searchInput").value.trim();
+  if (!term){ clearContentSearch(); return; }
+  if (!indexed && source !== "cache"){ setStatus("Content search needs an indexed local folder (or cached index).", true); return; }
+  const re = new RegExp(escapeReg(term), "gi");
+  const hits = []; const fileSet = new Set();
+  for (let id = 0; id < files.length && hits.length < 400; id++){
+    const t = contents[id];
+    if (t == null) continue;
+    re.lastIndex = 0;
+    let m, perFile = 0;
+    while ((m = re.exec(t)) && hits.length < 400 && perFile < 8){
+      const ls = t.lastIndexOf("\n", m.index) + 1;
+      let le = t.indexOf("\n", m.index); if (le < 0) le = t.length;
+      const lineNo = (t.slice(0, ls).match(/\n/g) || []).length + 1;
+      hits.push({id, line: lineNo, text: t.slice(ls, Math.min(le, ls+220))});
+      fileSet.add(id); perFile++;
+      re.lastIndex = le + 1;
+    }
+    if (perFile) fileSet.add(id);
+  }
+  matchedFiles = fileSet;
+  $("secResults").style.display = "";
+  $("resTitle").textContent = `"${term}" — ${hits.length}${hits.length >= 400 ? "+" : ""} hits in ${fileSet.size} files`;
+  const body = $("resBody"); body.innerHTML = "";
+  const hre = new RegExp("(" + escapeReg(escapeHtml(term)) + ")", "gi");
+  for (const h of hits.slice(0, 200)){
+    const el = document.createElement("div"); el.className = "hit";
+    el.innerHTML = `<span class="hp">${escapeHtml(files[h.id].path)}:${h.line}</span>` +
+      `<span class="hs">${escapeHtml(h.text.trim()).replace(hre, "<mark>$1</mark>")}</span>`;
+    el.onclick = () => openViewer(h.id, h.line);
+    body.appendChild(el);
+  }
+  drawMap(); drawGraph();
+}
+function clearContentSearch(){
+  matchedFiles = null;
+  $("secResults").style.display = "none";
+  drawMap(); drawGraph();
+}
+$("resClose").onclick = () => { clearContentSearch(); };
+$("selClose").onclick = () => { graph.sel = null; $("secSel").style.display = "none"; drawGraph(); };
+$("searchInput").addEventListener("input", e => {
+  if ($("searchMode").value === "names"){
+    searchTerm = e.target.value.trim().toLowerCase();
+    matchedFiles = null;
+    drawMap(); drawGraph();
+  }
+});
+$("searchInput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && $("searchMode").value === "content") runContentSearch();
+});
+$("searchMode").addEventListener("change", () => {
+  searchTerm = ""; clearContentSearch();
+  $("searchInput").placeholder = $("searchMode").value === "names" ? "filter by name…" : "grep content… (Enter)";
+});
+
+/* ================= view switching ================= */
+function switchView(v){
+  activeView = v;
+  $("tabMap").classList.toggle("active", v === "map");
+  $("tabGraph").classList.toggle("active", v === "graph");
+  cvsMap.style.display = v === "map" ? "block" : "none";
+  cvsGraph.style.display = v === "graph" ? "block" : "none";
+  resizeCanvases();
+  $("breadcrumb").style.display = v === "map" ? "flex" : "none";
+  $("graphCtrls").style.display = v === "graph" ? "flex" : "none";
+  if (v === "graph" && files.length){
+    if (!indexed && !indexing && source === "local") buildIndex().then(() => buildGraph());
+    if (!graph.built) buildGraph(); else { drawGraph(); }
+  }
+  updateGraphEmpty();
+  if (v === "map") drawMap();
+}
+$("tabMap").onclick = () => switchView("map");
+$("tabGraph").onclick = () => switchView("graph");
+$("gReset").onclick = () => { graph.mode = "folders"; graph.ego = null; graph.sel = null; graph.expanded.clear(); $("secSel").style.display="none"; buildGraph(); };
+$("gBack").onclick = () => { graph.mode = "folders"; graph.ego = null; graph.sel = null; $("secSel").style.display="none"; buildGraph(); };
+$("gHop").onclick = () => { graph.egoHops = 2; buildGraph(); };
+$("gImports").onchange = () => buildGraph(true);
+$("gRefs").onchange = () => buildGraph(true);
+$("gIso").onchange = () => buildGraph(true);
+function updateBadge(){
+  const el = $("srcBadge");
+  if (!source){ el.style.display = "none"; return; }
+  el.style.display = "";
+  if (source === "github"){ el.className = "gh"; el.textContent = "GitHub · structure only"; el.title = "Loaded from the GitHub API — file names & sizes only, so no dependency graph. Open your local clone to index it."; }
+  else if (source === "cache"){ el.className = "loc"; el.textContent = "cached index"; el.title = "Loaded from this browser's cache — dependency graph, grep and code viewer all work."; }
+  else { el.className = indexed ? "loc" : ""; el.textContent = indexed ? "local · indexed" : (indexing ? "local · indexing…" : "local"); el.title = "Local folder — nothing leaves your machine."; }
+}
+function updateGraphEmpty(){
+  const el = $("graphEmpty");
+  const show = activeView === "graph" && files.length > 0 && edgeCount() === 0;
+  el.style.display = show ? "flex" : "none";
+  $("graphHelp").style.display = activeView === "graph" && files.length ? "block" : "none";
+  updateBadge();
+  if (!show) return;
+  let msg;
+  if (indexing) msg = "<b>Indexing…</b><br>Dependency links will appear here when it finishes.";
+  else if (source === "github") msg = "<b>No dependency data — this repo was loaded from GitHub, which gives structure only</b> (file names and sizes, no contents).<br><br>To get the dependency graph, clone the repo and open the folder with <b>“Open local folder…”</b> (or drop it on the page). It's indexed once on your machine — nothing is uploaded — then cached for instant reuse.";
+  else if (indexed) msg = "<b>No dependency links detected in this folder.</b><br>The indexer looks for imports (Python / JS / C-style) and mentions of other files' paths or names.";
+  else msg = "<b>Not indexed yet.</b> Open a local folder to build the dependency index.";
+  el.innerHTML = `<div class="box">${msg}</div>`;
+}
+
+/* ================= graph canvas events ================= */
+cvsGraph.addEventListener("mousedown", e => {
+  const box = cvsGraph.getBoundingClientRect();
+  const mx = e.clientX - box.left, my = e.clientY - box.top;
+  const nd = graphHit(mx, my);
+  if (nd){ graph.drag = {node: nd, moved:false}; graph.alpha = Math.max(graph.alpha, 0.25); runSim(); }
+  else { graph.panning = true; graph.panMoved = false; cvsGraph.style.cursor = "grabbing"; }
+  graph.lastM = [mx, my];
+});
+addEventListener("mousemove", e => {
+  if (activeView !== "graph") return;
+  const box = cvsGraph.getBoundingClientRect();
+  const mx = e.clientX - box.left, my = e.clientY - box.top;
+  if (graph.drag){
+    const [wx, wy] = graphWorld(mx, my);
+    graph.drag.node.x = wx; graph.drag.node.y = wy;
+    graph.drag.moved = true;
+    graph.alpha = Math.max(graph.alpha, 0.12);
+    runSim();
+  } else if (graph.panning){
+    graph.view.tx += mx - graph.lastM[0];
+    graph.view.ty += my - graph.lastM[1];
+    graph.panMoved = true;
+    drawGraph();
+  }
+  graph.lastM = [mx, my];
+});
+addEventListener("mouseup", () => {
+  if (graph.panning && !graph.panMoved && graph.sel){
+    graph.sel = null; renderSelection(null); drawGraph();
+  }
+  if (graph.drag && !graph.drag.moved){
+    const nd = graph.drag.node;
+    graph.sel = graph.sel === nd.key ? null : nd.key;
+    renderSelection(graph.sel ? nd : null);
+    drawGraph();
+  }
+  graph.drag = null; graph.panning = false;
+  if (activeView === "graph") cvsGraph.style.cursor = "grab";
+});
+cvsGraph.addEventListener("dblclick", e => {
+  const box = cvsGraph.getBoundingClientRect();
+  const nd = graphHit(e.clientX - box.left, e.clientY - box.top);
+  if (!nd) return;
+  if (nd.isFile){ openViewer(nd.fileId); return; }
+  graph.expanded.add(nd.key);
+  graph.spawnHint = {prefix: nd.key, x: nd.x, y: nd.y};
+  buildGraph(true);
+  const kids = graph.nodes.filter(x => x.key === nd.key || x.key.startsWith(nd.key + "/")).length;
+  setStatus(`Expanded ${nd.key}/ — ${kids} items burst out of it (right-click one to collapse back)`);
+});
+cvsGraph.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  const box = cvsGraph.getBoundingClientRect();
+  const nd = graphHit(e.clientX - box.left, e.clientY - box.top);
+  if (!nd) return;
+  const parent = dirOf(nd.key);
+  let closed = null;
+  if (graph.expanded.has(parent)) closed = parent;
+  else if (graph.expanded.has(nd.key)) closed = nd.key;
+  else return;
+  graph.expanded.delete(closed);
+  graph.spawnHint = {prefix: closed, x: nd.x, y: nd.y};
+  buildGraph(true);
+  setStatus(`Collapsed ${closed}/`);
+});
+cvsGraph.addEventListener("wheel", e => {
+  e.preventDefault();
+  const box = cvsGraph.getBoundingClientRect();
+  const mx = e.clientX - box.left, my = e.clientY - box.top;
+  const v = graph.view;
+  const k2 = Math.max(0.12, Math.min(6, v.k * Math.exp(-e.deltaY * 0.0012)));
+  v.tx = mx - (mx - v.tx) * k2/v.k;
+  v.ty = my - (my - v.ty) * k2/v.k;
+  v.k = k2;
+  drawGraph();
+}, {passive:false});
+cvsGraph.addEventListener("mousemove", e => {
+  const box = cvsGraph.getBoundingClientRect();
+  const nd = graphHit(e.clientX - box.left, e.clientY - box.top);
+  if (nd !== graph.hover){ graph.hover = nd; if (!simTimer) drawGraph(); }
+  if (nd){
+    tooltip.innerHTML = `<div class="path">${escapeHtml(nd.key)}${nd.isFile?"":"/"}</div>` +
+      `<div class="meta">${nd.isFile ? humanSize(nd.size) : fmtInt(nd.count)+" files · "+humanSize(nd.size)} · ${nd.inN} in / ${nd.outN} out` +
+      `${nd.isFile ? " · dbl-click: code" : " · dbl-click: expand"}</div>`;
+    tooltip.style.display = "block";
+    positionTooltip(e);
+  } else tooltip.style.display = "none";
+});
+cvsGraph.addEventListener("mouseleave", () => { tooltip.style.display = "none"; graph.hover = null; });
+
+/* ================= treemap canvas events ================= */
+function positionTooltip(e){
+  const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+  tooltip.style.left = Math.min(e.clientX + 14, innerWidth - tw - 8) + "px";
+  tooltip.style.top = Math.min(e.clientY + 14, innerHeight - th - 8) + "px";
+}
+cvsMap.addEventListener("mousemove", e => {
+  if (!currentRoot) return;
+  const box = cvsMap.getBoundingClientRect();
+  const node = hitTestMap(currentRoot, e.clientX - box.left, e.clientY - box.top);
+  if (node !== hoverNode){ hoverNode = node; drawMap(); }
+  if (node && node !== currentRoot){
+    const total = Math.max(currentRoot.total, 1);
+    const pct = (node.total/total*100).toFixed(2);
+    tooltip.innerHTML = node.isFile
+      ? `<div class="path">${escapeHtml(node.path)}</div><div class="meta">${escapeHtml(node.lang[0])} · ${humanSize(node.size)} · ${pct}% of view · click to read</div>`
+      : `<div class="path">${escapeHtml(node.path || node.name)}/</div><div class="meta">${fmtInt(node.fileCount)} files · ${humanSize(node.size)} · ${pct}% of view</div>`;
+    tooltip.style.display = "block";
+    positionTooltip(e);
+  } else tooltip.style.display = "none";
+});
+cvsMap.addEventListener("mouseleave", () => {
+  tooltip.style.display = "none";
+  if (hoverNode){ hoverNode = null; drawMap(); }
+});
+cvsMap.addEventListener("click", e => {
+  if (!currentRoot) return;
+  const box = cvsMap.getBoundingClientRect();
+  const node = hitTestMap(currentRoot, e.clientX - box.left, e.clientY - box.top);
+  if (!node || node === currentRoot) return;
+  if (node.isFile) openViewer(node.fileId);
+  else zoomTo(node);
+});
+cvsMap.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  if (currentRoot && currentRoot.parent) zoomTo(currentRoot.parent);
+});
+
+/* ================= IndexedDB cache ================= */
+function idb(){
+  return new Promise((res, rej) => {
+    const req = indexedDB.open("repo-atlas", 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore("meta", {keyPath:"key"});
+      req.result.createObjectStore("data", {keyPath:"key"});
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function saveCache(){
+  if (source !== "local" || !indexed) return;
+  const db = await idb();
+  const edges = [];
+  edgesOut.forEach((m, from) => { for (const [to, kind] of m) edges.push([from, to, kind === "imp" ? 1 : 0, edgeEvidence.get(from + "|" + to) || []]); });
+  const payload = {
+    key: rootName, builtAt: Date.now(),
+    files: files.map(f => ({p:f.path, s:f.size})),
+    contents, edges,
+  };
+  await new Promise((res, rej) => {
+    const tx = db.transaction(["meta","data"], "readwrite");
+    tx.objectStore("meta").put({key:rootName, builtAt:payload.builtAt, nFiles:files.length, nEdges:edges.length});
+    tx.objectStore("data").put(payload);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  refreshCacheList();
+}
+async function listCaches(){
+  try {
+    const db = await idb();
+    return await new Promise((res, rej) => {
+      const req = db.transaction("meta").objectStore("meta").getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => rej(req.error);
+    });
+  } catch { return []; }
+}
+async function loadCache(key){
+  const db = await idb();
+  const payload = await new Promise((res, rej) => {
+    const req = db.transaction("data").objectStore("data").get(key);
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+  if (!payload){ setStatus("Cache entry not found.", true); return; }
+  const entries = payload.files.map(f => ({path:f.p, size:f.s}));
+  rawEntries = entries;
+  if (!setDataset(entries, key, "cache", null, true)) return;
+  contents = payload.contents;
+  for (const [from, to, imp, ev] of payload.edges){
+    if (from < files.length && to < files.length){
+      const kind = imp ? "imp" : "ref";
+      edgesOut[from].set(to, kind); edgesIn[to].set(from, kind);
+      if (ev && ev.length) edgeEvidence.set(from + "|" + to, ev);
+    }
+  }
+  indexed = true;
+  setStatus(`${key} — loaded from cache: ${fmtInt(files.length)} files, ${fmtInt(edgeCount())} dependency links (built ${new Date(payload.builtAt).toLocaleDateString()})`);
+  renderOverview(); renderHubs(); updateGraphEmpty();
+  graph.built = false;
+  if (activeView === "graph") buildGraph();
+}
+async function deleteCache(key){
+  const db = await idb();
+  await new Promise((res, rej) => {
+    const tx = db.transaction(["meta","data"], "readwrite");
+    tx.objectStore("meta").delete(key); tx.objectStore("data").delete(key);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  refreshCacheList();
+}
+async function refreshCacheList(){
+  const metas = await listCaches();
+  const sel = $("cacheSelect");
+  sel.innerHTML = '<option value="">cached indexes…</option>';
+  const chips = $("cacheChips"); chips.innerHTML = "";
+  for (const m of metas.sort((a,b) => b.builtAt - a.builtAt)){
+    const o = document.createElement("option");
+    o.value = m.key;
+    o.textContent = `${m.key} (${fmtInt(m.nFiles)} files, ${new Date(m.builtAt).toLocaleDateString()})`;
+    sel.appendChild(o);
+    const b = document.createElement("button");
+    b.textContent = `⚡ ${m.key} — ${fmtInt(m.nFiles)} files`;
+    b.title = "Load cached index (instant, no folder needed)";
+    b.onclick = () => loadCache(m.key);
+    const d = document.createElement("button");
+    d.textContent = "✕";
+    d.title = `Delete the cached index for ${m.key}`;
+    d.onclick = () => deleteCache(m.key);
+    chips.appendChild(b); chips.appendChild(d);
+  }
+}
+$("cacheSelect").addEventListener("change", e => {
+  if (e.target.value){ loadCache(e.target.value); e.target.selectedIndex = 0; }
+});
+
+/* ================= GitHub loading ================= */
+function parseRepoInput(str){
+  str = str.trim();
+  let m = str.match(/github\.com\/([^\/\s]+)\/([^\/\s#?]+)(?:\/tree\/([^\s?#]+))?/);
+  if (m) return {owner:m[1], repo:m[2].replace(/\.git$/,""), branch:m[3] || null};
+  m = str.match(/^([\w.-]+)\/([\w.-]+?)(?:@([\w.\/-]+))?$/);
+  if (m) return {owner:m[1], repo:m[2], branch:m[3] || null};
+  return null;
+}
+async function ghFetch(url, token){
+  const headers = {Accept:"application/vnd.github+json"};
+  if (token) headers.Authorization = "Bearer " + token;
+  const res = await fetch(url, {headers});
+  if (!res.ok){
+    let msg = `GitHub API ${res.status}`;
+    try { msg += " — " + (await res.json()).message; } catch {}
+    if (res.status === 403 || res.status === 429) msg += " (rate limit? add a token)";
+    throw new Error(msg);
+  }
+  return res.json();
+}
+async function loadGitHub(){
+  const parsed = parseRepoInput($("repoInput").value);
+  if (!parsed){ setStatus("Couldn't parse that — use owner/repo or a github.com URL.", true); return; }
+  const token = $("tokenInput").value.trim();
+  const btn = $("loadBtn"); btn.disabled = true;
+  try {
+    setStatus(`Fetching ${parsed.owner}/${parsed.repo}…`);
+    let branch = parsed.branch;
+    if (!branch){
+      const info = await ghFetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, token);
+      branch = info.default_branch;
+    }
+    setStatus(`Fetching file tree of ${parsed.owner}/${parsed.repo}@${branch}…`);
+    const data = await ghFetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, token);
+    const entries = data.tree.filter(e => e.type === "blob").map(e => ({path:e.path, size:e.size || 0}));
+    rawEntries = entries;
+    setDataset(entries, `${parsed.owner}/${parsed.repo}@${branch}`, "github", {owner:parsed.owner, repo:parsed.repo, branch});
+    if (data.truncated) setStatus($("statusText").textContent + " — WARNING: tree truncated by GitHub", true);
+    switchView("map");
+  } catch (err){ setStatus(err.message, true); }
+  finally { btn.disabled = false; }
+}
+$("loadBtn").onclick = loadGitHub;
+$("repoInput").addEventListener("keydown", e => { if (e.key === "Enter") loadGitHub(); });
+$("tokenInput").addEventListener("keydown", e => { if (e.key === "Enter") loadGitHub(); });
+
+/* ================= local folder loading ================= */
+function loadFileList(fileList){
+  const entries = [];
+  let first = "";
+  for (const f of fileList){
+    const rel = f.webkitRelativePath || f.name;
+    const parts = rel.split("/");
+    if (!first) first = parts[0];
+    entries.push({path: parts.length > 1 ? parts.slice(1).join("/") : parts[0], size: f.size, file: f});
+  }
+  rawEntries = entries;
+  if (setDataset(entries, first || "local folder", "local", null)){
+    buildIndex();
+  }
+}
+async function readDroppedEntry(entry, prefix, out){
+  if (entry.isFile){
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({path: prefix + entry.name, size: file.size, file});
+  } else if (entry.isDirectory){
+    const reader = entry.createReader();
+    let batch;
+    do {
+      batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      for (const en of batch) await readDroppedEntry(en, prefix + entry.name + "/", out);
+    } while (batch.length);
+  }
+}
+$("folderBtn").onclick = () => $("folderInput").click();
+$("folderInput").addEventListener("change", e => { if (e.target.files.length) loadFileList(e.target.files); });
+function applyExcludes(){
+  if (!rawEntries){ setStatus("Nothing loaded yet — the exclude list will apply when you load a folder or repo."); return; }
+  if (indexing){ setStatus("Indexing is still running — try Apply again when it finishes.", true); return; }
+  // keep already-read contents so local folders don't need re-reading
+  const oldContents = new Map();
+  files.forEach((f, id) => { if (contents[id] != null) oldContents.set(f.path, contents[id]); });
+  const src = source, g = gh, name = rootName;
+  if (!setDataset(rawEntries, name, src, g)) return;
+  files.forEach((f, id) => {
+    const c = oldContents.get(f.path);
+    if (c != null) contents[id] = c;
+  });
+  if (src === "local" || src === "cache") buildIndex();
+  else setStatus(`Excludes applied — ${fmtInt(files.length)} files, ${humanSize(tree.size)}.`);
+}
+$("applyBtn").onclick = applyExcludes;
+$("excludeInput").addEventListener("keydown", e => { if (e.key === "Enter") applyExcludes(); });
+["dragenter","dragover"].forEach(ev => addEventListener(ev, e => { e.preventDefault(); document.body.classList.add("dragging"); }));
+["dragleave","drop"].forEach(ev => addEventListener(ev, e => { e.preventDefault(); document.body.classList.remove("dragging"); }));
+addEventListener("drop", async e => {
+  const items = [...(e.dataTransfer?.items || [])];
+  const entry = items[0]?.webkitGetAsEntry?.();
+  if (!entry) return;
+  setStatus("Reading dropped folder…");
+  try {
+    const out = [];
+    await readDroppedEntry(entry, "", out);
+    const entries = out.map(x => ({path: x.path.startsWith(entry.name + "/") ? x.path.slice(entry.name.length+1) : x.path, size:x.size, file:x.file}));
+    rawEntries = entries;
+    if (setDataset(entries, entry.name, "local", null)) buildIndex();
+  } catch (err){ setStatus("Failed to read folder: " + err.message, true); }
+});
+
+/* ================= misc ================= */
+$("pngBtn").onclick = () => {
+  const cvs = activeView === "map" ? cvsMap : cvsGraph;
+  const out = document.createElement("canvas");
+  out.width = cvs.width; out.height = cvs.height;
+  const octx = out.getContext("2d");
+  octx.fillStyle = "#0d1117";
+  octx.fillRect(0, 0, out.width, out.height);
+  octx.drawImage(cvs, 0, 0);
+  const a = document.createElement("a");
+  a.download = (rootName || "repo-atlas").replace(/[^\w.-]+/g, "_") + "-" + activeView + ".png";
+  a.href = out.toDataURL("image/png");
+  a.click();
+};
+addEventListener("keydown", e => {
+  if (e.key === "Escape"){
+    if ($("viewer").classList.contains("open")){ $("viewer").classList.remove("open"); viewerFileId = null; }
+    else if (graph.sel){ graph.sel = null; renderSelection(null); drawGraph(); }
+  }
+});
+function resizeCanvases(){
+  for (const [cvs, ctx] of [[cvsMap, mctx], [cvsGraph, gctx]]){
+    const box = cvs.getBoundingClientRect();
+    cvs.width = Math.max(1, Math.round(box.width * devicePixelRatio));
+    cvs.height = Math.max(1, Math.round(box.height * devicePixelRatio));
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  }
+  relayoutMap();
+  if (graph.built) drawGraph();
+}
+addEventListener("resize", resizeCanvases);
+resizeCanvases();
+refreshCacheList();
+
+/* ================= in-memory loader (demo + tests) ================= */
+function loadMemoryEntries(list, name){
+  const entries = list.map(f => ({path:f.path, size:(f.text||"").length || f.size || 0,
+    file: new File([f.text || ""], f.path.split("/").pop())}));
+  rawEntries = entries;
+  if (setDataset(entries, name || "sample", "local", null)) return buildIndex();
+}
+window.atlasDebug = { loadFromMemory: loadMemoryEntries, state: () => ({files, edgesOut, edgesIn, indexed}) };
+
+/* ================= bundled demo project ================= */
+const SAMPLE = [
+["README.md", `# sample-project
+
+A small, fake ML training project bundled as the Repo Atlas demo.
+
+- Entry point: mlproj/cli.py
+- Training loop: mlproj/train.py
+- Config chain: configs/train.yml includes configs/base.yml
+- Dashboard: web/dashboard/index.html
+
+Run 'make train' or scripts/run_train.sh.
+`],
+["Makefile", `train:
+\tbash scripts/run_train.sh
+
+test:
+\tpytest tests/test_train.py tests/test_models.py
+
+docker:
+\tdocker build -t sample-project .
+`],
+["pyproject.toml", `[project]
+name = "sample-project"
+version = "0.1.0"
+dependencies = ["torch", "pyyaml", "numpy"]
+`],
+["requirements.txt", `torch
+pyyaml
+numpy
+`],
+["Dockerfile", `FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY mlproj mlproj
+COPY configs configs
+CMD ["python", "-m", "mlproj.cli", "train", "--config", "configs/deploy.yml"]
+`],
+["configs/base.yml", `project: sample-project
+seed: 42
+model:
+  name: resnet50
+  num_classes: 10
+optimizer:
+  name: adamw
+  lr: 3.0e-4
+  weight_decay: 0.05
+`],
+["configs/train.yml", `include: configs/base.yml
+epochs: 20
+batch_size: 128
+data:
+  train_csv: tests/data/tiny.csv
+  num_workers: 4
+checkpoint_dir: runs/exp1
+`],
+["configs/eval.yml", `include: configs/base.yml
+checkpoint: runs/exp1/best.pt
+metrics: [accuracy, f1]
+`],
+["configs/deploy.yml", `base: train.yml
+replicas: 2
+device: cuda
+serve:
+  port: 8080
+`],
+["configs/ci.yml", `steps:
+  - name: lint
+    run: ruff check mlproj
+  - name: test
+    run: pytest tests/test_train.py
+  - name: smoke-train
+    run: bash scripts/run_train.sh --config configs/train.yml --epochs 1
+`],
+["mlproj/__init__.py", `from mlproj.config import load_config
+
+__all__ = ["load_config"]
+__version__ = "0.1.0"
+`],
+["mlproj/config.py", `import yaml
+from pathlib import Path
+
+DEFAULT = "configs/base.yml"
+
+def load_config(path=DEFAULT):
+    cfg = yaml.safe_load(Path(path).read_text())
+    parent = cfg.pop("include", None)
+    if parent:
+        base = load_config(parent)
+        base.update(cfg)
+        return base
+    return cfg
+`],
+["mlproj/cli.py", `import argparse
+
+from mlproj.config import load_config
+from mlproj.train import train
+from mlproj.eval import evaluate
+
+def main():
+    p = argparse.ArgumentParser("mlproj")
+    p.add_argument("command", choices=["train", "eval"])
+    p.add_argument("--config", default="configs/train.yml")
+    args = p.parse_args()
+    cfg = load_config(args.config)
+    if args.command == "train":
+        train(cfg)
+    else:
+        evaluate(cfg)
+
+if __name__ == "__main__":
+    main()
+`],
+["mlproj/train.py", `import torch
+
+from mlproj.config import load_config
+from mlproj.data.loader import build_loader
+from mlproj.models.registry import create_model
+from mlproj.utils.logging import get_logger
+from mlproj.utils.io import save_checkpoint
+
+log = get_logger(__name__)
+
+def train_one_epoch(model, loader, opt):
+    model.train()
+    total = 0.0
+    for x, y in loader:
+        opt.zero_grad()
+        loss = model.loss(x, y)
+        loss.backward()
+        opt.step()
+        total += loss.item()
+    return total / max(len(loader), 1)
+
+def train(cfg):
+    model = create_model(cfg["model"])
+    loader = build_loader(cfg["data"], train=True)
+    opt = torch.optim.AdamW(model.parameters(), lr=cfg["optimizer"]["lr"])
+    for epoch in range(cfg["epochs"]):
+        loss = train_one_epoch(model, loader, opt)
+        log.info("epoch %d loss %.4f", epoch, loss)
+        save_checkpoint(model, cfg["checkpoint_dir"], epoch)
+`],
+["mlproj/eval.py", `from mlproj.data.loader import build_loader
+from mlproj.models.registry import create_model
+from mlproj.utils.logging import get_logger
+
+log = get_logger(__name__)
+
+def evaluate(cfg):
+    model = create_model(cfg["model"])
+    loader = build_loader(cfg["data"], train=False)
+    correct = seen = 0
+    for x, y in loader:
+        pred = model(x).argmax(-1)
+        correct += int((pred == y).sum())
+        seen += len(y)
+    acc = correct / max(seen, 1)
+    log.info("accuracy %.3f", acc)
+    return acc
+`],
+["mlproj/data/loader.py", `import csv
+
+from mlproj.data.augment import default_transforms
+
+def build_loader(data_cfg, train=True):
+    rows = list(csv.reader(open(data_cfg["train_csv"])))
+    tfm = default_transforms() if train else None
+    return DataLoaderStub(rows, tfm, data_cfg.get("num_workers", 0))
+
+class DataLoaderStub:
+    def __init__(self, rows, tfm, workers):
+        self.rows, self.tfm, self.workers = rows, tfm, workers
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def __len__(self):
+        return len(self.rows)
+`],
+["mlproj/data/augment.py", `import random
+
+def default_transforms():
+    return [flip, jitter]
+
+def flip(x):
+    return x[::-1] if random.random() < 0.5 else x
+
+def jitter(x):
+    return x
+`],
+["mlproj/models/registry.py", `from mlproj.models.resnet import ResNet
+from mlproj.models.transformer import TransformerEncoder
+
+REGISTRY = {
+    "resnet50": lambda cfg: ResNet(depth=50, num_classes=cfg["num_classes"]),
+    "vit_small": lambda cfg: TransformerEncoder(dim=384, heads=6),
+}
+
+def create_model(model_cfg):
+    name = model_cfg["name"]
+    if name not in REGISTRY:
+        raise KeyError(f"unknown model {name}")
+    return REGISTRY[name](model_cfg)
+`],
+["mlproj/models/resnet.py", `import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class BasicBlock(nn.Module):
+    def __init__(self, cin, cout, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(cin, cout, 3, stride, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(cout)
+        self.conv2 = nn.Conv2d(cout, cout, 3, 1, 1, bias=False)
+        self.bn2 = nn.BatchNorm2d(cout)
+        self.down = None
+        if stride != 1 or cin != cout:
+            self.down = nn.Sequential(
+                nn.Conv2d(cin, cout, 1, stride, bias=False),
+                nn.BatchNorm2d(cout),
+            )
+
+    def forward(self, x):
+        identity = self.down(x) if self.down else x
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return F.relu(out + identity)
+
+class ResNet(nn.Module):
+    def __init__(self, depth=50, num_classes=10):
+        super().__init__()
+        self.stem = nn.Conv2d(3, 64, 7, 2, 3, bias=False)
+        self.layer1 = BasicBlock(64, 128, 2)
+        self.layer2 = BasicBlock(128, 256, 2)
+        self.head = nn.Linear(256, num_classes)
+
+    def forward(self, x):
+        x = self.stem(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = x.mean(dim=(2, 3))
+        return self.head(x)
+
+    def loss(self, x, y):
+        return F.cross_entropy(self(x), y)
+`],
+["mlproj/models/transformer.py", `import math
+
+import torch
+import torch.nn as nn
+
+class Attention(nn.Module):
+    def __init__(self, dim, heads):
+        super().__init__()
+        self.heads = heads
+        self.qkv = nn.Linear(dim, dim * 3)
+        self.proj = nn.Linear(dim, dim)
+
+    def forward(self, x):
+        b, n, d = x.shape
+        q, k, v = self.qkv(x).chunk(3, dim=-1)
+        attn = (q @ k.transpose(-2, -1)) / math.sqrt(d)
+        return self.proj(attn.softmax(dim=-1) @ v)
+
+class Block(nn.Module):
+    def __init__(self, dim, heads):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = Attention(dim, heads)
+        self.norm2 = nn.LayerNorm(dim)
+        self.mlp = nn.Sequential(nn.Linear(dim, dim * 4), nn.GELU(), nn.Linear(dim * 4, dim))
+
+    def forward(self, x):
+        x = x + self.attn(self.norm1(x))
+        return x + self.mlp(self.norm2(x))
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, dim=384, heads=6, depth=6):
+        super().__init__()
+        self.blocks = nn.ModuleList(Block(dim, heads) for _ in range(depth))
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, x):
+        for blk in self.blocks:
+            x = blk(x)
+        return self.norm(x)
+
+    def loss(self, x, y):
+        return nn.functional.cross_entropy(self(x).mean(1), y)
+`],
+["mlproj/utils/logging.py", `import logging
+
+def get_logger(name):
+    log = logging.getLogger(name)
+    if not log.handlers:
+        h = logging.StreamHandler()
+        h.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+        log.addHandler(h)
+        log.setLevel(logging.INFO)
+    return log
+`],
+["mlproj/utils/io.py", `import os
+
+import torch
+
+def save_checkpoint(model, out_dir, epoch):
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"epoch{epoch}.pt")
+    torch.save(model.state_dict(), path)
+    return path
+`],
+["scripts/run_train.sh", `#!/usr/bin/env bash
+set -euo pipefail
+python -m mlproj.cli train --config configs/train.yml "$@"
+`],
+["scripts/export_onnx.py", `import torch
+
+from mlproj.config import load_config
+from mlproj.models.registry import create_model
+
+def export(config_path="configs/eval.yml", out="model.onnx"):
+    cfg = load_config(config_path)
+    model = create_model(cfg["model"])
+    torch.onnx.export(model, torch.zeros(1, 3, 224, 224), out)
+
+if __name__ == "__main__":
+    export()
+`],
+["tests/test_train.py", `from mlproj.config import load_config
+from mlproj.train import train_one_epoch
+
+def test_config_chain():
+    cfg = load_config("configs/train.yml")
+    assert cfg["seed"] == 42 and cfg["epochs"] == 20
+
+def test_one_epoch_runs():
+    assert callable(train_one_epoch)
+`],
+["tests/test_models.py", `from mlproj.models.registry import create_model, REGISTRY
+
+def test_registry_has_models():
+    assert "resnet50" in REGISTRY
+
+def test_create_model():
+    model = create_model({"name": "resnet50", "num_classes": 10})
+    assert model is not None
+`],
+["tests/data/tiny.csv", `x,y
+0.1,0
+0.9,1
+0.4,0
+0.7,1
+`],
+["web/dashboard/index.html", `<!DOCTYPE html>
+<html>
+<head><link rel="stylesheet" href="style.css"></head>
+<body>
+  <h1>sample-project dashboard</h1>
+  <div id="chart"></div>
+  <script type="module" src="app.js"><\/script>
+</body>
+</html>
+`],
+["web/dashboard/app.js", `import { fetchMetrics } from './api.js';
+
+async function render() {
+  const metrics = await fetchMetrics();
+  const el = document.getElementById('chart');
+  el.textContent = JSON.stringify(metrics, null, 2);
+}
+
+render();
+`],
+["web/dashboard/api.js", `export async function fetchMetrics() {
+  const res = await fetch('/api/metrics');
+  return res.json();
+}
+`],
+["web/dashboard/style.css", `body { font-family: system-ui; margin: 2rem; }
+#chart { border: 1px solid #ccc; padding: 1rem; white-space: pre; }
+`],
+["docs/architecture.md", `# Architecture
+
+Training flows from mlproj/cli.py into mlproj/train.py.
+Models are constructed by mlproj/models/registry.py.
+Configs are layered: configs/train.yml includes configs/base.yml.
+Deployment reads configs/deploy.yml (see Dockerfile).
+`],
+].map(([path, text]) => ({path, text}));
+
+async function loadDemo(){ await loadMemoryEntries(SAMPLE, "sample-project"); }
+$("demoBtn").onclick = loadDemo;
+
+/* hash links: #demo / #demo-graph / #demo-viewer / #demo-grep / #gh=owner/repo */
+async function handleHash(){
+  const h = decodeURIComponent(location.hash || "");
+  if (h.startsWith("#gh=")){
+    $("repoInput").value = h.slice(4);
+    loadGitHub();
+    return;
+  }
+  if (!h.startsWith("#demo")) return;
+  await loadDemo();
+  const mode = h.slice(6);
+  if (mode === "graph"){
+    switchView("graph");
+    graph.expanded.add("mlproj"); graph.expanded.add("configs");
+    buildGraph(true);
+  } else if (mode === "viewer"){
+    openViewer(pathToId.get("mlproj/train.py"));
+  } else if (mode === "grep"){
+    $("searchMode").value = "content";
+    $("searchInput").value = "create_model";
+    runContentSearch();
+  }
+}
+handleHash();
+</script>
+</body>
+</html>
