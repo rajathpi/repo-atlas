@@ -50,7 +50,7 @@
   #breadcrumb .crumb:hover{background:var(--panel2)}
   #breadcrumb .sep{color:var(--dim)}
   #breadcrumb .crumb.last{color:var(--text); cursor:default}
-  #graphCtrls{flex:1; display:flex; gap:8px; align-items:center; padding-bottom:6px; flex-wrap:wrap}
+  #graphCtrls{flex:0 0 auto; display:flex; gap:8px; align-items:center; padding-bottom:6px; flex-wrap:wrap}
   #searchWrap{display:flex; gap:6px; align-items:center; padding-bottom:6px}
   #searchInput{width:190px}
   #status{padding:3px 14px; font-size:12px; color:var(--dim); background:var(--panel); border-bottom:1px solid var(--border); min-height:22px; display:flex; align-items:center; gap:10px}
@@ -170,7 +170,7 @@
   <input type="password" id="tokenInput" placeholder="token (optional)" autocomplete="off">
   <button id="loadBtn">Load GitHub</button>
   <label class="small">exclude:</label>
-  <input type="text" id="excludeInput" value=".git, node_modules, __pycache__, .venv, venv, dist, build, .mypy_cache, .pytest_cache, target, .idea, .vscode">
+  <input type="text" id="excludeInput" value=".git, node_modules, __pycache__, .venv, venv, dist, build, .mypy_cache, .pytest_cache, target, .idea, .vscode, .cache, .terraform, coverage, graphify-out, .ub_cache">
   <button id="applyBtn" title="Re-apply the exclude list to the loaded codebase (Enter works too)">Apply</button>
 </header>
 <div id="toolbar2">
@@ -310,6 +310,7 @@ let edgesIn = [];          // id -> Map(fromId -> kind)
 let edgeEvidence = new Map(); // "from|to" -> [line numbers in the FROM file where the reference occurs]
 let indexed = false, indexing = false;
 let rawEntries = null;     // as loaded, before excludes — lets Apply re-filter without reloading
+let rootHandle = null;     // FileSystemDirectoryHandle when picked via showDirectoryPicker — lets Apply re-scan
 let rootName = "", source = null, gh = null;  // gh = {owner,repo,branch}
 let tree = null, currentRoot = null;
 let hoverNode = null, flashNode = null, flashUntil = 0;
@@ -319,7 +320,8 @@ let activeView = "map";
 let viewerFileId = null;
 
 const $ = id => document.getElementById(id);
-const cvsMap = $("cvsMap"), mctx = cvsMap.getContext("2d");
+const cvsMap = $("cvsMap");
+let mctx = cvsMap.getContext("2d"); // swapped to an offscreen ctx while the treemap base is cached
 const cvsGraph = $("cvsGraph"), gctx = cvsGraph.getContext("2d");
 const tooltip = $("tooltip");
 
@@ -337,7 +339,17 @@ function humanSize(n){
 const fmtInt = n => n.toLocaleString("en-US");
 function escapeHtml(s){ return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function escapeReg(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
-const yieldUI = () => new Promise(r => setTimeout(r, 0));
+// MessageChannel yield: setTimeout(0) gets clamped to 4ms after a few nested calls
+const _yieldQ = [], _yieldCh = new MessageChannel();
+_yieldCh.port1.onmessage = () => { const r = _yieldQ.shift(); if (r) r(); };
+const yieldUI = () => new Promise(r => { _yieldQ.push(r); _yieldCh.port2.postMessage(0); });
+let _lastYield = 0;
+async function yieldIfDue(){
+  if (performance.now() - _lastYield < 12) return false;
+  await yieldUI();
+  _lastYield = performance.now();
+  return true;
+}
 
 /* ================= dataset setup ================= */
 function excludeList(){
@@ -345,6 +357,7 @@ function excludeList(){
 }
 function setDataset(entries, name, src, ghInfo, skipExcludes){
   // entries: [{path,size,file?}]
+  if (indexing){ setStatus("Indexing is still running — wait for it to finish before loading something else.", true); return false; }
   const ex = skipExcludes ? new Set() : new Set(excludeList());
   files = []; pathToId = new Map(); byBase = new Map(); dirSet = new Set();
   contents = []; edgesOut = []; edgesIn = []; edgeEvidence = new Map(); indexed = false;
@@ -370,7 +383,7 @@ function setDataset(entries, name, src, ghInfo, skipExcludes){
   currentRoot = tree;
   $("dropHint").style.display = "none";
   $("secHubs").style.display = "none";
-  graph.expanded = new Set(); graph.mode = "folders"; graph.built = false;
+  graph.expanded = new Set(); graph.mode = "folders"; graph.root = ""; graph.ego = null; graph.built = false;
   relayoutMap(); if (activeView === "graph") buildGraph();
   setStatus(`${rootName} — ${fmtInt(tree.fileCount)} files, ${humanSize(tree.size)}`);
   updateGraphEmpty();
@@ -487,12 +500,29 @@ function annotateMatches(node){
 }
 function shade(depth){ return `hsl(215,15%,${12 + Math.min(depth,6)*3}%)`; }
 const dimActive = () => !!(searchTerm || matchedFiles);
+let mapCache = null;       // offscreen copy of the treemap so hover repaints are a blit, not 30k rects
+function invalidateMapCache(){ mapCache = null; }
 function drawMap(){
-  const rect = cvsMap.getBoundingClientRect();
-  mctx.clearRect(0, 0, rect.width, rect.height);
-  if (!currentRoot) return;
-  if (dimActive()) annotateMatches(currentRoot);
-  drawMapNode(currentRoot);
+  if (!cvsMap.width || !cvsMap.height) return;
+  if (!currentRoot){
+    mctx.save(); mctx.setTransform(1,0,0,1,0,0);
+    mctx.clearRect(0, 0, cvsMap.width, cvsMap.height); mctx.restore();
+    return;
+  }
+  if (!mapCache || mapCache.width !== cvsMap.width || mapCache.height !== cvsMap.height){
+    mapCache = document.createElement("canvas");
+    mapCache.width = cvsMap.width; mapCache.height = cvsMap.height;
+    const cctx = mapCache.getContext("2d");
+    cctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    if (dimActive()) annotateMatches(currentRoot);
+    const real = mctx; mctx = cctx;
+    drawMapNode(currentRoot);
+    mctx = real;
+  }
+  mctx.save(); mctx.setTransform(1,0,0,1,0,0);
+  mctx.clearRect(0, 0, cvsMap.width, cvsMap.height);
+  mctx.drawImage(mapCache, 0, 0);
+  mctx.restore();
   if (flashNode && performance.now() < flashUntil && flashNode.rect){
     const r = flashNode.rect;
     mctx.save(); mctx.strokeStyle = "#fff"; mctx.lineWidth = 2.5;
@@ -554,12 +584,23 @@ function relayoutMap(){
   if (!currentRoot) return;
   const rect = cvsMap.getBoundingClientRect();
   layoutNode(currentRoot, 0, 0, rect.width, rect.height, 0);
+  invalidateMapCache();
   drawMap(); renderBreadcrumb(); renderOverview();
 }
 function zoomTo(node){
   while (node && node.isFile) node = node.parent;
   if (!node) return;
   currentRoot = node; hoverNode = null; relayoutMap();
+  syncGraphRoot();
+}
+function syncGraphRoot(){
+  if (!tree) return;
+  const want = currentRoot && currentRoot !== tree ? currentRoot.path : "";
+  if (graph.mode === "ego" || graph.root === want) return;
+  graph.root = want;
+  graph.expanded.clear(); graph.sel = null; renderSelection(null);
+  graph.built = false;
+  if (activeView === "graph" && files.length) buildGraph();
 }
 function renderBreadcrumb(){
   const bc = $("breadcrumb"); bc.innerHTML = "";
@@ -673,7 +714,7 @@ async function buildIndex(){
       } catch { contents[id] = null; }
     }));
     setProgress((i+batch.length)/todo.length * 0.55);
-    if (i % 600 === 0) await yieldUI();
+    await yieldIfDue();
   }
   // pass 2: extract references
   setStatus(`Indexing ${rootName}: extracting dependencies…`);
@@ -684,7 +725,7 @@ async function buildIndex(){
       try { extractRefs(id); } catch {}
     }
     done++;
-    if (done % 120 === 0){ setProgress(0.55 + done/todo.length*0.45); await yieldUI(); }
+    if (await yieldIfDue()) setProgress(0.55 + done/todo.length*0.45);
   }
   setProgress(null);
   indexed = true; indexing = false;
@@ -711,7 +752,8 @@ function addEdge(from, to, kind, line){
 }
 function lineStarts(t){
   const s = [0];
-  for (let i = 0; i < t.length; i++) if (t.charCodeAt(i) === 10) s.push(i+1);
+  let i = t.indexOf("\n");
+  while (i >= 0){ s.push(i+1); i = t.indexOf("\n", i+1); }
   return s;
 }
 function lineAt(starts, idx){
@@ -758,7 +800,8 @@ const C_EXTS = new Set(["c","h","hpp","hh","cc","cpp","cxx","inl","cu","cuh"]);
 function extractRefs(id){
   const text = contents[id], f = files[id];
   const ext = extOf(f.path);
-  const starts = lineStarts(text);
+  let _starts = null;
+  const starts = () => _starts || (_starts = lineStarts(text)); // lazy: files with no refs skip the scan
   if (PY_EXTS.has(ext)) pyImports(text, f, id, starts);
   else if (JS_EXTS.has(ext)) jsImports(text, f, id, starts);
   else if (C_EXTS.has(ext)) cIncludes(text, f, id, starts);
@@ -782,7 +825,7 @@ function pyImports(text, f, id, starts){
   const re = /^[ \t]*(?:from[ \t]+([.\w]+)[ \t]+import[ \t]+([\w.,* \t()]+)|import[ \t]+([\w., \t]+))/gm;
   let m, n = 0;
   while ((m = re.exec(text)) && n++ < 400){
-    const line = lineAt(starts, m.index);
+    const line = lineAt(starts(), m.index);
     if (m[3]){ // plain: import a.b, c.d
       for (const mod of m[3].split(",").map(s => s.trim().split(/[ \t]/)[0]).filter(Boolean)){
         const t = resolvePyModule(mod, f);
@@ -817,7 +860,7 @@ function jsImports(text, f, id, starts){
       target = pathToId.get(base + e); if (target != null) break;
       target = pathToId.get(base + "/index" + (e || ".js")); if (target != null) break;
     }
-    if (target != null) addEdge(id, target, "imp", lineAt(starts, m.index));
+    if (target != null) addEdge(id, target, "imp", lineAt(starts(), m.index));
   }
 }
 function cIncludes(text, f, id, starts){
@@ -827,7 +870,7 @@ function cIncludes(text, f, id, starts){
     const spec = m[1];
     let target = pathToId.get(normPath(dirOf(f.path) + "/" + spec));
     if (target == null) target = resolveSuffix(spec.replace(/^\.\//, ""));
-    if (target != null) addEdge(id, target, "imp", lineAt(starts, m.index));
+    if (target != null) addEdge(id, target, "imp", lineAt(starts(), m.index));
   }
 }
 function genericRefs(text, f, id, starts){
@@ -852,21 +895,22 @@ function genericRefs(text, f, id, starts){
         for (const i of ids) if (dirOf(files[i].path) === dir){ target = i; break; }
       }
     }
-    if (target != null && target !== id){ addEdge(id, target, "ref", lineAt(starts, m.index)); added++; }
+    if (target != null && target !== id){ addEdge(id, target, "ref", lineAt(starts(), m.index)); added++; }
   }
 }
 
 /* ================= dependency graph ================= */
 const graph = {
   nodes: [], links: [], byKey: new Map(),
-  expanded: new Set(), mode: "folders", ego: null, egoHops: 1,
+  expanded: new Set(), mode: "folders", root: "", ego: null, egoHops: 1,
   sel: null, view: {tx:0, ty:0, k:1}, alpha: 0, built: false,
   drag: null, panning: false, hover: null, spawnHint: null,
 };
 function groupOf(path, cache){
   if (cache.has(path)) return cache.get(path);
-  const parts = path.split("/");
-  let cur = "", group = path;
+  const root = graph.root;
+  const parts = (root ? path.slice(root.length + 1) : path).split("/");
+  let cur = root, group = path;
   for (let i = 0; i < parts.length; i++){
     const nxt = cur ? cur + "/" + parts[i] : parts[i];
     if (dirSet.has(nxt)){
@@ -945,7 +989,9 @@ function buildGraph(keepPositions){
     }
   } else {
     const cache = new Map();
+    const inScope = p => !graph.root || p.startsWith(graph.root + "/");
     files.forEach((f, id) => {
+      if (!inScope(f.path)) return;
       const g = groupOf(f.path, cache);
       const isFile = g === f.path;
       const nd = ensureNode(g, isFile, isFile ? id : null);
@@ -956,7 +1002,7 @@ function buildGraph(keepPositions){
     const colorAgg = new Map();
     files.forEach(f => {
       const g = cache.get(f.path);
-      if (g === f.path) return;
+      if (g == null || g === f.path) return;
       let ca = colorAgg.get(g);
       if (!ca){ ca = new Map(); colorAgg.set(g, ca); }
       ca.set(f.lang[1], (ca.get(f.lang[1]) || 0) + f.size);
@@ -968,9 +1014,11 @@ function buildGraph(keepPositions){
     }
     files.forEach((f, id) => {
       const ga = cache.get(f.path);
+      if (ga == null) return;
       for (const [to, kind] of edgesOut[id]){
         if ((kind === "imp" && !showImp) || (kind === "ref" && !showRef)) continue;
         const gb = cache.get(files[to].path);
+        if (gb == null) continue;
         addLink(ga, gb, kind === "imp" ? "imp" : "ref");
       }
     });
@@ -1342,12 +1390,12 @@ function runContentSearch(){
     el.onclick = () => openViewer(h.id, h.line);
     body.appendChild(el);
   }
-  drawMap(); drawGraph();
+  invalidateMapCache(); drawMap(); drawGraph();
 }
 function clearContentSearch(){
   matchedFiles = null;
   $("secResults").style.display = "none";
-  drawMap(); drawGraph();
+  invalidateMapCache(); drawMap(); drawGraph();
 }
 $("resClose").onclick = () => { clearContentSearch(); };
 $("selClose").onclick = () => { graph.sel = null; $("secSel").style.display = "none"; drawGraph(); };
@@ -1355,7 +1403,7 @@ $("searchInput").addEventListener("input", e => {
   if ($("searchMode").value === "names"){
     searchTerm = e.target.value.trim().toLowerCase();
     matchedFiles = null;
-    drawMap(); drawGraph();
+    invalidateMapCache(); drawMap(); drawGraph();
   }
 });
 $("searchInput").addEventListener("keydown", e => {
@@ -1374,9 +1422,10 @@ function switchView(v){
   cvsMap.style.display = v === "map" ? "block" : "none";
   cvsGraph.style.display = v === "graph" ? "block" : "none";
   resizeCanvases();
-  $("breadcrumb").style.display = v === "map" ? "flex" : "none";
+  $("breadcrumb").style.display = "flex"; // shared with the graph: crumbs set the graph's scope too
   $("graphCtrls").style.display = v === "graph" ? "flex" : "none";
   if (v === "graph" && files.length){
+    syncGraphRoot();
     if (!indexed && !indexing && source === "local") buildIndex().then(() => buildGraph());
     if (!graph.built) buildGraph(); else { drawGraph(); }
   }
@@ -1385,8 +1434,17 @@ function switchView(v){
 }
 $("tabMap").onclick = () => switchView("map");
 $("tabGraph").onclick = () => switchView("graph");
-$("gReset").onclick = () => { graph.mode = "folders"; graph.ego = null; graph.sel = null; graph.expanded.clear(); $("secSel").style.display="none"; buildGraph(); };
-$("gBack").onclick = () => { graph.mode = "folders"; graph.ego = null; graph.sel = null; $("secSel").style.display="none"; buildGraph(); };
+$("gReset").onclick = () => {
+  graph.mode = "folders"; graph.ego = null; graph.sel = null; graph.expanded.clear(); graph.root = "";
+  $("secSel").style.display = "none";
+  if (tree && currentRoot !== tree){ currentRoot = tree; hoverNode = null; relayoutMap(); }
+  buildGraph();
+};
+$("gBack").onclick = () => {
+  graph.mode = "folders"; graph.ego = null; graph.sel = null;
+  graph.root = currentRoot && currentRoot !== tree ? currentRoot.path : "";
+  $("secSel").style.display = "none"; buildGraph();
+};
 $("gHop").onclick = () => { graph.egoHops = 2; buildGraph(); };
 $("gImports").onchange = () => buildGraph(true);
 $("gRefs").onchange = () => buildGraph(true);
@@ -1401,13 +1459,16 @@ function updateBadge(){
 }
 function updateGraphEmpty(){
   const el = $("graphEmpty");
-  const show = activeView === "graph" && files.length > 0 && edgeCount() === 0;
+  const noneAtAll = files.length > 0 && edgeCount() === 0;
+  const noneInScope = !noneAtAll && graph.built && graph.mode === "folders" && graph.root && !graph.links.length;
+  const show = activeView === "graph" && (noneAtAll || noneInScope);
   el.style.display = show ? "flex" : "none";
   $("graphHelp").style.display = activeView === "graph" && files.length ? "block" : "none";
   updateBadge();
   if (!show) return;
   let msg;
-  if (indexing) msg = "<b>Indexing…</b><br>Dependency links will appear here when it finishes.";
+  if (noneInScope) msg = `<b>No dependency links between the items inside ${escapeHtml(graph.root)}/.</b><br>They may still be referenced from elsewhere — <b>⌂ Top level</b> shows the whole codebase.`;
+  else if (indexing) msg = "<b>Indexing…</b><br>Dependency links will appear here when it finishes.";
   else if (source === "github") msg = "<b>No dependency data — this repo was loaded from GitHub, which gives structure only</b> (file names and sizes, no contents).<br><br>To get the dependency graph, clone the repo and open the folder with <b>“Open local folder…”</b> (or drop it on the page). It's indexed once on your machine — nothing is uploaded — then cached for instant reuse.";
   else if (indexed) msg = "<b>No dependency links detected in this folder.</b><br>The indexer looks for imports (Python / JS / C-style) and mentions of other files' paths or names.";
   else msg = "<b>Not indexed yet.</b> Open a local folder to build the dependency index.";
@@ -1560,16 +1621,37 @@ async function saveCache(){
   const db = await idb();
   const edges = [];
   edgesOut.forEach((m, from) => { for (const [to, kind] of m) edges.push([from, to, kind === "imp" ? 1 : 0, edgeEvidence.get(from + "|" + to) || []]); });
-  const payload = {
-    key: rootName, builtAt: Date.now(),
-    files: files.map(f => ({p:f.path, s:f.size})),
-    contents, edges,
-  };
+  // chunked: one structured clone of everything at once stalls the page for seconds on big repos
+  const chunks = [];
+  let part = {contents: [], edges: []}, budget = 0;
+  const flush = () => { if (part.contents.length || part.edges.length) chunks.push(part); part = {contents: [], edges: []}; budget = 0; };
+  contents.forEach((t, id) => {
+    if (t == null) return;
+    part.contents.push([id, t]); budget += t.length;
+    if (budget > 6_000_000) flush();
+  });
+  for (let i = 0; i < edges.length; i += 50000){
+    part.edges = edges.slice(i, i + 50000); flush();
+  }
+  flush();
+  const builtAt = Date.now();
   await new Promise((res, rej) => {
     const tx = db.transaction(["meta","data"], "readwrite");
-    tx.objectStore("meta").put({key:rootName, builtAt:payload.builtAt, nFiles:files.length, nEdges:edges.length});
-    tx.objectStore("data").put(payload);
-    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("cache write aborted"));
+    tx.objectStore("meta").put({key:rootName, builtAt, nFiles:files.length, nEdges:edges.length});
+    const data = tx.objectStore("data");
+    data.delete(IDBKeyRange.bound(rootName + "\u0001", rootName + "\u0001\uffff"));
+    data.put({key: rootName, builtAt, files: files.map(f => ({p:f.path, s:f.size})), nChunks: chunks.length});
+    let i = 0;
+    // chained puts: each clone runs in its own task so the page keeps painting
+    const putNext = () => {
+      if (i >= chunks.length) return;
+      const c = chunks[i];
+      const req = data.put({key: rootName + "\u0001" + i, contents: c.contents, edges: c.edges});
+      i++;
+      req.onsuccess = putNext;
+    };
+    putNext();
   });
   refreshCacheList();
 }
@@ -1592,15 +1674,33 @@ async function loadCache(key){
   });
   if (!payload){ setStatus("Cache entry not found.", true); return; }
   const entries = payload.files.map(f => ({path:f.p, size:f.s}));
-  rawEntries = entries;
+  rawEntries = entries; rootHandle = null;
   if (!setDataset(entries, key, "cache", null, true)) return;
-  contents = payload.contents;
-  for (const [from, to, imp, ev] of payload.edges){
-    if (from < files.length && to < files.length){
-      const kind = imp ? "imp" : "ref";
-      edgesOut[from].set(to, kind); edgesIn[to].set(from, kind);
-      if (ev && ev.length) edgeEvidence.set(from + "|" + to, ev);
+  const applyEdges = list => {
+    for (const [from, to, imp, ev] of list){
+      if (from < files.length && to < files.length){
+        const kind = imp ? "imp" : "ref";
+        edgesOut[from].set(to, kind); edgesIn[to].set(from, kind);
+        if (ev && ev.length) edgeEvidence.set(from + "|" + to, ev);
+      }
     }
+  };
+  if (payload.nChunks != null){
+    for (let i = 0; i < payload.nChunks; i++){
+      const chunk = await new Promise((res, rej) => {
+        const req = db.transaction("data").objectStore("data").get(key + "\u0001" + i);
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => rej(req.error);
+      });
+      if (!chunk) continue;
+      for (const [id, t] of chunk.contents) if (id < contents.length) contents[id] = t;
+      applyEdges(chunk.edges);
+      setProgress((i+1)/payload.nChunks);
+    }
+    setProgress(null);
+  } else { // pre-chunking cache entry
+    contents = payload.contents;
+    applyEdges(payload.edges);
   }
   indexed = true;
   setStatus(`${key} — loaded from cache: ${fmtInt(files.length)} files, ${fmtInt(edgeCount())} dependency links (built ${new Date(payload.builtAt).toLocaleDateString()})`);
@@ -1612,7 +1712,9 @@ async function deleteCache(key){
   const db = await idb();
   await new Promise((res, rej) => {
     const tx = db.transaction(["meta","data"], "readwrite");
-    tx.objectStore("meta").delete(key); tx.objectStore("data").delete(key);
+    tx.objectStore("meta").delete(key);
+    tx.objectStore("data").delete(key);
+    tx.objectStore("data").delete(IDBKeyRange.bound(key + "\u0001", key + "\u0001\uffff"));
     tx.oncomplete = res; tx.onerror = () => rej(tx.error);
   });
   refreshCacheList();
@@ -1678,7 +1780,7 @@ async function loadGitHub(){
     setStatus(`Fetching file tree of ${parsed.owner}/${parsed.repo}@${branch}…`);
     const data = await ghFetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, token);
     const entries = data.tree.filter(e => e.type === "blob").map(e => ({path:e.path, size:e.size || 0}));
-    rawEntries = entries;
+    rawEntries = entries; rootHandle = null;
     setDataset(entries, `${parsed.owner}/${parsed.repo}@${branch}`, "github", {owner:parsed.owner, repo:parsed.repo, branch});
     if (data.truncated) setStatus($("statusText").textContent + " — WARNING: tree truncated by GitHub", true);
     switchView("map");
@@ -1699,32 +1801,88 @@ function loadFileList(fileList){
     if (!first) first = parts[0];
     entries.push({path: parts.length > 1 ? parts.slice(1).join("/") : parts[0], size: f.size, file: f});
   }
-  rawEntries = entries;
+  rawEntries = entries; rootHandle = null;
   if (setDataset(entries, first || "local folder", "local", null)){
     buildIndex();
   }
 }
-async function readDroppedEntry(entry, prefix, out){
+let scanNote = 0;
+async function scanProgress(count, what){
+  if (performance.now() - scanNote < 250) return;
+  scanNote = performance.now();
+  setStatus(`${what}… ${fmtInt(count)} files found (excluded folders are skipped, not read)`);
+  await yieldUI();
+}
+// File System Access walk: excluded dirs are never entered, subtrees scan in parallel
+async function walkDirHandle(dir, prefix, ex, out){
+  const subdirs = [], reads = [];
+  for await (const [name, handle] of dir.entries()){
+    if (ex.has(name)) continue;
+    if (handle.kind === "file")
+      reads.push(handle.getFile().then(file => { out.push({path: prefix + name, size: file.size, file}); }, () => {}));
+    else subdirs.push(walkDirHandle(handle, prefix + name + "/", ex, out));
+  }
+  await Promise.all(reads);
+  await scanProgress(out.length, "Scanning folder");
+  await Promise.all(subdirs);
+}
+async function loadFromHandle(handle){
+  if (indexing){ setStatus("Indexing is still running — wait for it to finish.", true); return; }
+  scanNote = 0;
+  setStatus(`Scanning ${handle.name}…`);
+  const out = [];
+  try { await walkDirHandle(handle, "", new Set(excludeList()), out); }
+  catch (err){ setStatus("Failed to read folder: " + err.message, true); return; }
+  rawEntries = out; rootHandle = handle;
+  if (setDataset(out, handle.name, "local", null)) buildIndex();
+}
+async function readDroppedEntry(entry, prefix, out, ex){
   if (entry.isFile){
     const file = await new Promise((res, rej) => entry.file(res, rej));
     out.push({path: prefix + entry.name, size: file.size, file});
-  } else if (entry.isDirectory){
-    const reader = entry.createReader();
-    let batch;
-    do {
-      batch = await new Promise((res, rej) => reader.readEntries(res, rej));
-      for (const en of batch) await readDroppedEntry(en, prefix + entry.name + "/", out);
-    } while (batch.length);
+    return;
   }
+  if (!entry.isDirectory) return;
+  const reader = entry.createReader();
+  const kids = [];
+  let batch;
+  do {
+    batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+    kids.push(...batch);
+  } while (batch.length);
+  await scanProgress(out.length, "Reading dropped folder");
+  await Promise.all(kids.filter(k => !ex.has(k.name)).map(k => readDroppedEntry(k, prefix + entry.name + "/", out, ex)));
 }
-$("folderBtn").onclick = () => $("folderInput").click();
+$("folderBtn").onclick = async () => {
+  if (window.showDirectoryPicker){
+    let handle;
+    try { handle = await showDirectoryPicker(); } catch { return; } // picker cancelled
+    loadFromHandle(handle);
+    return;
+  }
+  $("folderInput").click();
+};
 $("folderInput").addEventListener("change", e => { if (e.target.files.length) loadFileList(e.target.files); });
-function applyExcludes(){
-  if (!rawEntries){ setStatus("Nothing loaded yet — the exclude list will apply when you load a folder or repo."); return; }
+async function applyExcludes(){
   if (indexing){ setStatus("Indexing is still running — try Apply again when it finishes.", true); return; }
+  if (!rawEntries && !rootHandle){ setStatus("Nothing loaded yet — the exclude list will apply when you load a folder or repo."); return; }
   // keep already-read contents so local folders don't need re-reading
   const oldContents = new Map();
   files.forEach((f, id) => { if (contents[id] != null) oldContents.set(f.path, contents[id]); });
+  if (rootHandle){
+    // re-scan the picked folder so loosening the list brings skipped dirs back
+    scanNote = 0;
+    setStatus(`Re-scanning ${rootHandle.name}…`);
+    const out = [];
+    try {
+      await walkDirHandle(rootHandle, "", new Set(excludeList()), out);
+      rawEntries = out;
+      if (!setDataset(out, rootHandle.name, "local", null)) return;
+      files.forEach((f, id) => { const c = oldContents.get(f.path); if (c != null) contents[id] = c; });
+      buildIndex();
+      return;
+    } catch {} // folder permission lapsed — fall back to the last scan
+  }
   const src = source, g = gh, name = rootName;
   if (!setDataset(rawEntries, name, src, g)) return;
   files.forEach((f, id) => {
@@ -1742,12 +1900,14 @@ addEventListener("drop", async e => {
   const items = [...(e.dataTransfer?.items || [])];
   const entry = items[0]?.webkitGetAsEntry?.();
   if (!entry) return;
+  if (indexing){ setStatus("Indexing is still running — wait for it to finish.", true); return; }
   setStatus("Reading dropped folder…");
+  scanNote = 0;
   try {
     const out = [];
-    await readDroppedEntry(entry, "", out);
+    await readDroppedEntry(entry, "", out, new Set(excludeList()));
     const entries = out.map(x => ({path: x.path.startsWith(entry.name + "/") ? x.path.slice(entry.name.length+1) : x.path, size:x.size, file:x.file}));
-    rawEntries = entries;
+    rawEntries = entries; rootHandle = null;
     if (setDataset(entries, entry.name, "local", null)) buildIndex();
   } catch (err){ setStatus("Failed to read folder: " + err.message, true); }
 });
@@ -1790,7 +1950,7 @@ refreshCacheList();
 function loadMemoryEntries(list, name){
   const entries = list.map(f => ({path:f.path, size:(f.text||"").length || f.size || 0,
     file: new File([f.text || ""], f.path.split("/").pop())}));
-  rawEntries = entries;
+  rawEntries = entries; rootHandle = null;
   if (setDataset(entries, name || "sample", "local", null)) return buildIndex();
 }
 window.atlasDebug = { loadFromMemory: loadMemoryEntries, state: () => ({files, edgesOut, edgesIn, indexed}) };
