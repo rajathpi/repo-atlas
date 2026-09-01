@@ -41,7 +41,7 @@ Once indexed, searching every file's contents is instant: `file:line` hits with 
 1. Download [`repo-atlas.html`](repo-atlas.html) (one file, zero dependencies)
 2. Open it in a browser (Chrome/Edge recommended)
 3. Either:
-   - **Drop a local folder** on the page (or *Open local folder…*) — indexed once on your machine, cached in the browser for one-click reuse
+   - **Drop a local folder** on the page (or *Open local folder…*) — indexed once on your machine, cached in the browser for one-click reuse. Excluded folders like `.git` and `node_modules` are never opened, so a 20,000-file repo indexes in a few seconds
    - **Load a GitHub repo** by name (`owner/repo`, URL, or `owner/repo@branch`) — structure and treemap only, since the API doesn't provide file contents
    - Hit **▶ Load demo project** to play with a bundled sample
 
@@ -68,6 +68,9 @@ Local folders never leave your machine — files are read in the browser, the in
 - The path-reference detector counts mentions — a filename in a comment counts (which is often exactly what you want to see).
 - GitHub's tree API truncates extremely large repos (>100k files); the status bar warns when that happens.
 - Sizes are bytes, not lines of code.
+- Excluded folders are skipped during the scan, so they cost nothing — but that also means loosening the exclude list re-scans the folder rather than filtering what was already read.
+- Above ~80 MB of text, the browser cache keeps the index (treemap and graph) but not file contents; re-open the folder to grep or read code. Re-indexing a large repo takes a few seconds anyway.
+- The graph draws at most 500 nodes at a time; past that it shows the largest and tells you, since a denser graph is unreadable and slow to lay out. Zoom into a subfolder on the treemap to see the rest.
 
 ## License
 

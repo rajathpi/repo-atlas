@@ -873,20 +873,43 @@ function cIncludes(text, f, id, starts){
     if (target != null) addEdge(id, target, "imp", lineAt(starts(), m.index));
   }
 }
+const isWordCode = c => (c>=48&&c<=57)||(c>=65&&c<=90)||(c>=97&&c<=122)||c===95;
+const isAlphaCode = c => (c>=65&&c<=90)||(c>=97&&c<=122);
+// Longest "name.ext" prefix of a token, or null. Scans dots right-to-left like a
+// backtracking engine would, but bounded, so it stays linear on hex/base64 runs.
+function fileishPrefix(tok){
+  let dot = tok.length, tries = 0;
+  while (tries++ < 4){
+    dot = tok.lastIndexOf(".", dot - 1);
+    if (dot <= 0) return null;
+    if (tok.charCodeAt(dot-1) === 47) continue;              // "/.foo" — dotfile, not an extension
+    if (!isAlphaCode(tok.charCodeAt(dot+1))) continue;
+    let end = dot + 1;
+    while (end < tok.length && end - dot <= 8 && isWordCode(tok.charCodeAt(end))) end++;
+    if (end - dot - 1 < 1 || end - dot - 1 > 8) continue;
+    if (end < tok.length && isWordCode(tok.charCodeAt(end))) continue;  // ext ran past 8 chars
+    return tok.slice(0, end);
+  }
+  return null;
+}
 function genericRefs(text, f, id, starts){
-  const re = /[A-Za-z0-9_@][A-Za-z0-9_@.\/\-]*\.[A-Za-z][A-Za-z0-9_]{0,7}\b/g;
+  // Greedy with nothing following it: one linear pass, no backtracking. The old
+  // pattern put ".ext" after a class that also matched ".", which went quadratic
+  // on long tokens and hung the tab on data-heavy repos.
+  const re = /[A-Za-z0-9_@][A-Za-z0-9_@.\/\-]*/g;
   let m, n = 0, added = 0;
   const selfBase = f.path.slice(f.path.lastIndexOf("/")+1).toLowerCase();
-  while ((m = re.exec(text)) && n++ < 6000 && added < 150){
-    let cand = m[0].replace(/^\.\//, "");
+  while ((m = re.exec(text)) && n++ < 200000 && added < 150){
+    let cand = fileishPrefix(m[0]);
+    if (cand == null) continue;
+    cand = cand.replace(/^\.\//, "");
     const candBase = cand.slice(cand.lastIndexOf("/")+1).toLowerCase();
     if (candBase === selfBase && !cand.includes("/")) continue;
     if (!LANGS[extOf(candBase)] && !byBase.has(candBase)) continue;
     let target = null;
     if (cand.includes("/")){
       target = resolveSuffix(cand);
-      if (target == null && (cand.startsWith("../") || m[0].startsWith("./")))
-        target = pathToId.get(normPath(dirOf(f.path) + "/" + m[0]));
+      if (target == null) target = pathToId.get(normPath(dirOf(f.path) + "/" + cand));
     } else {
       const ids = byBase.get(candBase);
       if (ids && ids.length === 1) target = ids[0];
@@ -900,8 +923,9 @@ function genericRefs(text, f, id, starts){
 }
 
 /* ================= dependency graph ================= */
+const GRAPH_NODE_CAP = 500;
 const graph = {
-  nodes: [], links: [], byKey: new Map(),
+  nodes: [], links: [], byKey: new Map(), trimmed: 0,
   expanded: new Set(), mode: "folders", root: "", ego: null, egoHops: 1,
   sel: null, view: {tx:0, ty:0, k:1}, alpha: 0, built: false,
   drag: null, panning: false, hover: null, spawnHint: null,
@@ -925,7 +949,7 @@ function groupOf(path, cache){
 function buildGraph(keepPositions){
   const showImp = $("gImports").checked, showRef = $("gRefs").checked;
   const old = keepPositions ? new Map(graph.nodes.map(nd => [nd.key, nd])) : new Map();
-  const nodesBy = new Map();
+  let nodesBy = new Map();
   const rect = cvsGraph.getBoundingClientRect();
   const cx = rect.width/2, cy = rect.height/2;
   function ensureNode(key, isFile, fileId){
@@ -1023,6 +1047,17 @@ function buildGraph(keepPositions){
       }
     });
   }
+  // The force sim is O(n^2) per frame, and a graph this dense is unreadable anyway.
+  graph.trimmed = 0;
+  if (nodesBy.size > GRAPH_NODE_CAP){
+    const keep = [...nodesBy.values()].sort((a,b) => b.size - a.size).slice(0, GRAPH_NODE_CAP);
+    graph.trimmed = nodesBy.size - keep.length;
+    nodesBy = new Map(keep.map(nd => [nd.key, nd]));
+    for (const k of [...linksBy.keys()]){
+      const l = linksBy.get(k);
+      if (!nodesBy.has(l.s) || !nodesBy.has(l.t)) linksBy.delete(k);
+    }
+  }
   graph.nodes = [...nodesBy.values()];
   graph.byKey = nodesBy;
   graph.links = [...linksBy.values()].map(l => ({...l, sn:nodesBy.get(l.s), tn:nodesBy.get(l.t)}));
@@ -1053,6 +1088,8 @@ function buildGraph(keepPositions){
                      : Math.max(10, 8 + 22*Math.sqrt(nd.size/maxSize));
   graph.built = true;
   graph.alpha = 0.9;
+  if (graph.trimmed)
+    setStatus(`Showing the ${GRAPH_NODE_CAP} largest of ${fmtInt(GRAPH_NODE_CAP + graph.trimmed)} items here — zoom into a subfolder on the treemap to see the rest.`);
   $("gBack").style.display = graph.mode === "ego" ? "" : "none";
   $("gHop").style.display = graph.mode === "ego" && graph.egoHops < 2 ? "" : "none";
   runSim();
@@ -1074,18 +1111,32 @@ function simTick(){
   const rect = cvsGraph.getBoundingClientRect();
   const cx = rect.width/2, cy = rect.height/2;
   const a = graph.alpha;
-  // repulsion
-  for (let i = 0; i < nodes.length; i++){
-    const n1 = nodes[i];
-    for (let j = i+1; j < nodes.length; j++){
-      const n2 = nodes[j];
-      let dx = n1.x - n2.x, dy = n1.y - n2.y;
-      let d2 = dx*dx + dy*dy;
-      if (d2 < 1){ dx = Math.random()-0.5; dy = Math.random()-0.5; d2 = 1; }
-      const d = Math.sqrt(d2);
-      const rep = 1800 * a * (n1.r + n2.r) / d2;
-      const fx = dx/d * rep, fy = dy/d * rep;
-      n1.vx += fx; n1.vy += fy; n2.vx -= fx; n2.vy -= fy;
+  // Repulsion against neighbours in a uniform grid rather than every pair: the force
+  // is 1/d^2, so distant nodes contribute almost nothing, and all-pairs is O(n^2) per
+  // frame — several hundred nodes would stall the animation.
+  const CELL = 140;
+  const grid = new Map();
+  for (const nd of nodes){
+    const k = Math.floor(nd.x/CELL) + "," + Math.floor(nd.y/CELL);
+    let b = grid.get(k);
+    if (!b){ b = []; grid.set(k, b); }
+    b.push(nd);
+  }
+  for (const [key, bucket] of grid){
+    const c = key.indexOf(","), gx = +key.slice(0, c), gy = +key.slice(c+1);
+    for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++){
+      const other = grid.get((gx+ox) + "," + (gy+oy));
+      if (!other) continue;
+      for (const n1 of bucket) for (const n2 of other){
+        if (n1 === n2) continue;
+        // every ordered pair is visited once, so push only n1 — symmetric overall
+        let dx = n1.x - n2.x, dy = n1.y - n2.y;
+        let d2 = dx*dx + dy*dy;
+        if (d2 < 1){ dx = Math.random()-0.5; dy = Math.random()-0.5; d2 = 1; }
+        const d = Math.sqrt(d2);
+        const rep = 1800 * a * (n1.r + n2.r) / d2;
+        n1.vx += dx/d * rep; n1.vy += dy/d * rep;
+      }
     }
   }
   // springs
@@ -1361,6 +1412,10 @@ function runContentSearch(){
   const term = $("searchInput").value.trim();
   if (!term){ clearContentSearch(); return; }
   if (!indexed && source !== "cache"){ setStatus("Content search needs an indexed local folder (or cached index).", true); return; }
+  if (!contents.some(t => t != null)){
+    setStatus("This cached index holds structure only — re-open the folder to search inside files.", true);
+    return;
+  }
   const re = new RegExp(escapeReg(term), "gi");
   const hits = []; const fileSet = new Set();
   for (let id = 0; id < files.length && hits.length < 400; id++){
@@ -1605,6 +1660,7 @@ cvsMap.addEventListener("contextmenu", e => {
 });
 
 /* ================= IndexedDB cache ================= */
+const CACHE_TEXT_CAP = 80 * 1024 * 1024;
 function idb(){
   return new Promise((res, rej) => {
     const req = indexedDB.open("repo-atlas", 1);
@@ -1621,11 +1677,17 @@ async function saveCache(){
   const db = await idb();
   const edges = [];
   edgesOut.forEach((m, from) => { for (const [to, kind] of m) edges.push([from, to, kind === "imp" ? 1 : 0, edgeEvidence.get(from + "|" + to) || []]); });
+  // Contents are cached only for repos small enough that persisting them is cheaper
+  // than re-indexing. Above the cap the entry is index-only: the treemap and graph
+  // still restore instantly, and grep asks for the folder again.
+  let textBytes = 0;
+  for (const t of contents) if (t != null) textBytes += t.length;
+  const withText = textBytes <= CACHE_TEXT_CAP;
   // chunked: one structured clone of everything at once stalls the page for seconds on big repos
   const chunks = [];
   let part = {contents: [], edges: []}, budget = 0;
   const flush = () => { if (part.contents.length || part.edges.length) chunks.push(part); part = {contents: [], edges: []}; budget = 0; };
-  contents.forEach((t, id) => {
+  if (withText) contents.forEach((t, id) => {
     if (t == null) return;
     part.contents.push([id, t]); budget += t.length;
     if (budget > 6_000_000) flush();
@@ -1638,10 +1700,10 @@ async function saveCache(){
   await new Promise((res, rej) => {
     const tx = db.transaction(["meta","data"], "readwrite");
     tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("cache write aborted"));
-    tx.objectStore("meta").put({key:rootName, builtAt, nFiles:files.length, nEdges:edges.length});
+    tx.objectStore("meta").put({key:rootName, builtAt, nFiles:files.length, nEdges:edges.length, withText});
     const data = tx.objectStore("data");
     data.delete(IDBKeyRange.bound(rootName + "\u0001", rootName + "\u0001\uffff"));
-    data.put({key: rootName, builtAt, files: files.map(f => ({p:f.path, s:f.size})), nChunks: chunks.length});
+    data.put({key: rootName, builtAt, withText, files: files.map(f => ({p:f.path, s:f.size})), nChunks: chunks.length});
     let i = 0;
     // chained puts: each clone runs in its own task so the page keeps painting
     const putNext = () => {
@@ -1703,7 +1765,8 @@ async function loadCache(key){
     applyEdges(payload.edges);
   }
   indexed = true;
-  setStatus(`${key} — loaded from cache: ${fmtInt(files.length)} files, ${fmtInt(edgeCount())} dependency links (built ${new Date(payload.builtAt).toLocaleDateString()})`);
+  setStatus(`${key} — loaded from cache: ${fmtInt(files.length)} files, ${fmtInt(edgeCount())} dependency links (built ${new Date(payload.builtAt).toLocaleDateString()})` +
+    (payload.withText === false ? " · treemap and graph only — re-open the folder to grep or read files" : ""));
   renderOverview(); renderHubs(); updateGraphEmpty();
   graph.built = false;
   if (activeView === "graph") buildGraph();
@@ -1813,45 +1876,77 @@ async function scanProgress(count, what){
   setStatus(`${what}… ${fmtInt(count)} files found (excluded folders are skipped, not read)`);
   await yieldUI();
 }
-// File System Access walk: excluded dirs are never entered, subtrees scan in parallel
-async function walkDirHandle(dir, prefix, ex, out){
-  const subdirs = [], reads = [];
-  for await (const [name, handle] of dir.entries()){
-    if (ex.has(name)) continue;
-    if (handle.kind === "file")
-      reads.push(handle.getFile().then(file => { out.push({path: prefix + name, size: file.size, file}); }, () => {}));
-    else subdirs.push(walkDirHandle(handle, prefix + name + "/", ex, out));
-  }
-  await Promise.all(reads);
-  await scanProgress(out.length, "Scanning folder");
-  await Promise.all(subdirs);
+// Directory walk shared by both local sources. Concurrency is bounded: a repo with
+// thousands of folders would otherwise put every folder and file handle in flight at once.
+const SCAN_DIRS = 8, SCAN_FILES = 32;
+function walkQueue(seed, listDir, what){
+  return new Promise((resolve, reject) => {
+    const out = [], queue = [seed];
+    let active = 0, failed = false;
+    const pump = () => {
+      if (failed) return;
+      while (active < SCAN_DIRS && queue.length){
+        const job = queue.shift();
+        active++;
+        (async () => {
+          const fileJobs = await listDir(job, queue);
+          for (let i = 0; i < fileJobs.length; i += SCAN_FILES)
+            await Promise.all(fileJobs.slice(i, i + SCAN_FILES).map(fn => fn(out)));
+          await scanProgress(out.length, what);
+        })().then(() => {
+          active--;
+          if (!active && !queue.length) resolve(out);
+          else pump();
+        }, err => { failed = true; reject(err); });
+      }
+    };
+    pump();
+  });
+}
+function walkDirHandle(root, ex){
+  return walkQueue([root, ""], async ([dir, prefix], queue) => {
+    const fileJobs = [];
+    for await (const [name, handle] of dir.entries()){
+      if (ex.has(name)) continue;
+      if (handle.kind === "file")
+        fileJobs.push(async out => {
+          try { const file = await handle.getFile(); out.push({path: prefix + name, size: file.size, file}); } catch {}
+        });
+      else queue.push([handle, prefix + name + "/"]);
+    }
+    return fileJobs;
+  }, "Scanning folder");
+}
+function walkDroppedEntry(root, ex){
+  return walkQueue([root, ""], async ([entry, prefix], queue) => {
+    const reader = entry.createReader();
+    const fileJobs = [];
+    let batch;
+    do {
+      batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      for (const en of batch){
+        if (ex.has(en.name)) continue;
+        if (en.isDirectory) queue.push([en, prefix + en.name + "/"]);
+        else if (en.isFile) fileJobs.push(async out => {
+          try {
+            const file = await new Promise((res, rej) => en.file(res, rej));
+            out.push({path: prefix + en.name, size: file.size, file});
+          } catch {}
+        });
+      }
+    } while (batch.length);
+    return fileJobs;
+  }, "Reading dropped folder");
 }
 async function loadFromHandle(handle){
   if (indexing){ setStatus("Indexing is still running — wait for it to finish.", true); return; }
   scanNote = 0;
   setStatus(`Scanning ${handle.name}…`);
-  const out = [];
-  try { await walkDirHandle(handle, "", new Set(excludeList()), out); }
+  let out;
+  try { out = await walkDirHandle(handle, new Set(excludeList())); }
   catch (err){ setStatus("Failed to read folder: " + err.message, true); return; }
   rawEntries = out; rootHandle = handle;
   if (setDataset(out, handle.name, "local", null)) buildIndex();
-}
-async function readDroppedEntry(entry, prefix, out, ex){
-  if (entry.isFile){
-    const file = await new Promise((res, rej) => entry.file(res, rej));
-    out.push({path: prefix + entry.name, size: file.size, file});
-    return;
-  }
-  if (!entry.isDirectory) return;
-  const reader = entry.createReader();
-  const kids = [];
-  let batch;
-  do {
-    batch = await new Promise((res, rej) => reader.readEntries(res, rej));
-    kids.push(...batch);
-  } while (batch.length);
-  await scanProgress(out.length, "Reading dropped folder");
-  await Promise.all(kids.filter(k => !ex.has(k.name)).map(k => readDroppedEntry(k, prefix + entry.name + "/", out, ex)));
 }
 $("folderBtn").onclick = async () => {
   if (window.showDirectoryPicker){
@@ -1873,9 +1968,8 @@ async function applyExcludes(){
     // re-scan the picked folder so loosening the list brings skipped dirs back
     scanNote = 0;
     setStatus(`Re-scanning ${rootHandle.name}…`);
-    const out = [];
     try {
-      await walkDirHandle(rootHandle, "", new Set(excludeList()), out);
+      const out = await walkDirHandle(rootHandle, new Set(excludeList()));
       rawEntries = out;
       if (!setDataset(out, rootHandle.name, "local", null)) return;
       files.forEach((f, id) => { const c = oldContents.get(f.path); if (c != null) contents[id] = c; });
@@ -1904,9 +1998,7 @@ addEventListener("drop", async e => {
   setStatus("Reading dropped folder…");
   scanNote = 0;
   try {
-    const out = [];
-    await readDroppedEntry(entry, "", out, new Set(excludeList()));
-    const entries = out.map(x => ({path: x.path.startsWith(entry.name + "/") ? x.path.slice(entry.name.length+1) : x.path, size:x.size, file:x.file}));
+    const entries = await walkDroppedEntry(entry, new Set(excludeList()));
     rawEntries = entries; rootHandle = null;
     if (setDataset(entries, entry.name, "local", null)) buildIndex();
   } catch (err){ setStatus("Failed to read folder: " + err.message, true); }
