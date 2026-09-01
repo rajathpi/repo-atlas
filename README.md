@@ -19,6 +19,7 @@ Treemaps tell you *what exists and where the bulk is*, but getting familiar with
 
 Built from a real index of your code: **imports** (Python — including `from . import x` — JS/TS relative imports, C/C++/CUDA `#include`) plus **path references** — any file mentioning another file's path or name. That second kind is what catches YAML `include:` chains, CI files invoking scripts, Dockerfiles copying configs, and docs pointing at code.
 
+- **The graph follows the treemap.** Zoom into `services/auth/` on the treemap, switch to Graph, and you get that folder's contents and the links among them — not the whole repo again. The breadcrumb stays visible in both views, so clicking a crumb re-scopes the graph too, and *⌂ Top level* resets both together
 - Starts folder-level so it's readable; **double-click a folder** to burst it into its contents (children explode out of the parent), **right-click** to collapse
 - **Click a node** to focus it — everything unrelated dims, and the sidebar lists what it depends on and what uses it
 - **"Most depended-on"** in the sidebar ranks the hub files everyone imports — the fastest way into an unfamiliar codebase; click one for an ego graph of just that file and its neighbors
@@ -52,11 +53,37 @@ Shareable links work too: `repo-atlas.html#gh=vllm-project/vllm` auto-loads a Gi
 | Where | Action | Result |
 |---|---|---|
 | Treemap | click folder / click file / right-click | zoom in / open code / zoom out |
+| Breadcrumb | click a crumb | zoom there — and re-scope the graph to match |
 | Graph | scroll / drag background / drag node | zoom / pan / move |
 | Graph | click / double-click folder / double-click file / right-click | focus deps / expand / open code / collapse |
 | Viewer | click line snippet / click name chip / Esc | jump to reference / open that file / close |
 | Search | `names` mode (live) / `content` mode (Enter) | filter by path / grep contents |
 | Exclude box | edit + Apply (or Enter) | re-filter in place, no reload |
+
+## Speed
+
+Indexing is a single pass over the text in your folder, so it scales with how much
+source there is rather than how big the checkout is. Local clones, Chrome on an
+Apple M5 Max:
+
+| Repo | Files indexed | Text | Index time |
+|---|---|---|---|
+| `huggingface/trl` | 608 | 9 MB | 0.3 s |
+| `vllm-project/vllm` | 6,634 | 70 MB | 3.0 s |
+| `sgl-project/sglang` | 8,097 | 88 MB | 3.8 s |
+| a 17k-file firmware monorepo | 16,956 | 208 MB | 4.1 s |
+| a 20k-file docs monorepo | 20,652 | 285 MB | 7.0 s |
+
+Excluded folders are skipped during the scan rather than filtered afterwards, so
+`.git`, `node_modules` and friends cost nothing at all — that 20k-file repo is
+35,000 files on disk. The UI keeps painting throughout: the indexer hands the main
+thread back on a time budget, so no single pause exceeds ~70 ms, apart from one
+bookkeeping step when the folder first loads (a third of a second on the 20k-file
+repo, proportionally less below that).
+
+Everything after indexing is interactive rather than batched: on that same 20k-file
+repo, grepping all 285 MB takes 37 ms, zooming the treemap 13 ms, and the dependency
+graph lays out at under 2 ms per frame.
 
 ## Privacy
 
