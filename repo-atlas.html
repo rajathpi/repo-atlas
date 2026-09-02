@@ -105,6 +105,8 @@
     border-bottom:1px solid rgba(45,51,59,.5); align-items:baseline;
   }
   .fileRow:hover .fp{color:var(--accent)}
+  .fileRow.sel{background:rgba(88,166,255,.14); box-shadow:inset 2px 0 0 var(--accent)}
+  .fileRow.sel .fp{color:var(--accent)}
   .fileRow .fp{flex:1; font-family:Consolas,monospace; word-break:break-all; color:var(--text)}
   .fileRow .fs{color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums}
   .hit{
@@ -2251,12 +2253,26 @@ function ingestGitText(text){
   return false;
 }
 /* ---- apply: history / hotspots ---- */
+function resolveLogPath(p){
+  // git log paths are repo-root-relative; the loaded folder may be the repo, a
+  // subfolder of it, or nested deeper — map each path onto the dataset if possible
+  if (!files.length || pathToId.has(p)) return p;
+  const id = resolveSuffix(p);              // loaded folder is an ancestor of the repo
+  if (id != null) return files[id].path;
+  const parts = p.split("/");               // loaded folder is a subfolder of the repo
+  for (let i = 1; i < Math.min(parts.length, 5); i++){
+    const q = parts.slice(i).join("/");
+    if (pathToId.has(q)) return q;
+  }
+  return p;
+}
 function applyLog(commits){
   gitCommits = commits.sort((a,b) => b.date - a.date);
   churnMap = new Map(); highlightedCommit = null;
   const now = Date.now();
   for (const c of gitCommits){
     if (!c.merge && /^Merge (pull request|branch|remote)/.test(c.subject)) c.merge = true;
+    c.files = c.files.map(resolveLogPath);
     const age = c.date ? Math.max(0, (now - c.date) / 864e5) : 400;
     const w = Math.exp(-age / 90);
     for (const p of c.files){
@@ -2271,10 +2287,11 @@ function applyLog(commits){
   annotateOverlays();
   const nAuthors = new Set(gitCommits.map(c => c.author).filter(Boolean)).size;
   if (files.length){
-    let hit = 0;
-    for (const p of churnMap.keys()) if (pathToId.has(p)) hit++;
+    let hit = 0, miss = null;
+    for (const p of churnMap.keys()){ if (pathToId.has(p)) hit++; else if (!miss) miss = p; }
     if (churnMap.size && hit / churnMap.size < 0.3){
-      setStatus(`History loaded, but only ${hit} of ${fmtInt(churnMap.size)} paths match the loaded folder — run the git command inside the folder you loaded.`, true);
+      setStatus(`History loaded, but only ${hit} of ${fmtInt(churnMap.size)} paths match the loaded codebase ` +
+        `(log has "${miss}", loaded paths look like "${files[0] ? files[0].path : "?"}") — is this the same repo?`, true);
     } else {
       colorMode = "churn"; $("colorSel").value = "churn";
       switchView("map");
@@ -2283,7 +2300,8 @@ function applyLog(commits){
   } else {
     setStatus(`History parsed: ${fmtInt(gitCommits.length)} commits — load the matching folder to see hotspots on the map.`);
   }
-  renderHotspots(); renderHistory(); drawMap();
+  renderHotspots(); renderHistory();
+  invalidateMapCache(); drawMap();
 }
 function renderHotspots(){
   const sec = $("secHotspots");
@@ -2311,8 +2329,10 @@ function renderHistory(){
   const el = $("histBody"); el.innerHTML = "";
   for (const c of gitCommits.slice(0, 40)){
     const row = document.createElement("div"); row.className = "fileRow";
+    if (c === highlightedCommit) row.classList.add("sel");
     const d = c.date ? new Date(c.date).toISOString().slice(5, 10) : "";
-    row.title = `${c.hash.slice(0, 10)} — ${c.files.length} files, +${c.adds} −${c.dels}. Click to highlight the touched files.`;
+    row.title = `${c.hash.slice(0, 10)} — ${c.files.length} files, +${c.adds} −${c.dels}. ` +
+      (c === highlightedCommit ? "Click again to clear the highlight." : "Click to highlight the touched files.");
     row.innerHTML = `<span class="fp">${c.merge ? "⑂ " : ""}${escapeHtml(c.subject || c.hash.slice(0, 10))}</span><span class="fs">${escapeHtml((c.author || "").split(" ")[0])} · ${d}</span>`;
     row.onclick = () => toggleCommitHighlight(c);
     el.appendChild(row);
@@ -2328,14 +2348,16 @@ function toggleCommitHighlight(c){
     matchedFiles = set; highlightedCommit = c;
     setStatus(`"${c.subject || c.hash.slice(0, 10)}" — ${c.author || "?"} · highlighting ${set.size} touched file${set.size === 1 ? "" : "s"}.`);
   }
-  drawMap(); drawGraph();
+  renderHistory();
+  invalidateMapCache(); drawMap(); drawGraph();
 }
 $("histClear").onclick = () => {
   gitCommits = []; churnMap = new Map(); highlightedCommit = null;
   if (colorMode === "churn"){ colorMode = "lang"; $("colorSel").value = "lang"; }
   $("colorSel").querySelector('[value="churn"]').disabled = true;
   if (!diffData) matchedFiles = null;
-  annotateOverlays(); renderHotspots(); renderHistory(); drawMap(); drawGraph();
+  annotateOverlays(); renderHotspots(); renderHistory();
+  invalidateMapCache(); drawMap(); drawGraph();
   setStatus("Git history cleared.");
 };
 /* ---- apply: review (diff) ---- */
@@ -2362,7 +2384,7 @@ function reviewApply(){
     for (const id of changed) for (const from of edgesIn[id].keys()) show.add(from);
   }
   matchedFiles = show; highlightedCommit = null;
-  drawMap(); drawGraph();
+  invalidateMapCache(); drawMap(); drawGraph();
 }
 function renderReview(){
   const sec = $("secReview");
@@ -2389,7 +2411,8 @@ $("revClear").onclick = () => {
   diffData = null; matchedFiles = null;
   if (colorMode === "diff"){ colorMode = "lang"; $("colorSel").value = "lang"; }
   $("colorSel").querySelector('[value="diff"]').disabled = true;
-  annotateOverlays(); renderReview(); drawMap(); drawGraph();
+  annotateOverlays(); renderReview();
+  invalidateMapCache(); drawMap(); drawGraph();
   setStatus("Review cleared.");
 };
 $("revImpact").onchange = () => reviewApply();
@@ -2425,7 +2448,7 @@ function openDiffOnly(path){
 }
 $("vTabDiff").onclick = () => { if (viewerFileId != null) openViewer(viewerFileId, null, {tab:"diff"}); };
 $("vTabFile").onclick = () => { if (viewerFileId != null) openViewer(viewerFileId, null, {tab:"file"}); };
-$("colorSel").onchange = e => { colorMode = e.target.value; drawMap(); };
+$("colorSel").onchange = e => { colorMode = e.target.value; invalidateMapCache(); drawMap(); };
 /* ---- modal, PR fetch, paste ---- */
 (function initGitCmds(){
   const pipe = /Win/i.test(navigator.platform || "") ? "clip" : "pbcopy";
