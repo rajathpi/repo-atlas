@@ -293,12 +293,15 @@
 <div id="gitModal">
   <div class="mbox">
     <h3>Git history &amp; review</h3>
-    <div class="mrow">Drop the output file anywhere on the page, paste below, or fetch a PR — the format is auto-detected.</div>
+    <div id="originRow" class="mrow" style="display:none"></div>
     <div class="mrow"><b>Hotspots + history</b> — who changed what, treemap colored by churn:</div>
-    <div class="cmd"><code>git log --numstat --date=short --no-color -n 5000 &gt; gitlog.txt</code><button data-copy="git log --numstat --date=short --no-color -n 5000 > gitlog.txt">copy</button></div>
-    <div class="mrow"><b>Review local changes vs main</b> — a branch, or uncommitted edits (e.g. what Claude just changed):</div>
-    <div class="cmd"><code>git diff main --no-color &gt; changes.diff</code><button data-copy="git diff main --no-color > changes.diff">copy</button></div>
-    <textarea id="gitText" placeholder="…or paste git log --numstat / git diff output here" spellcheck="false"></textarea>
+    <div class="cmd"><code id="cmdLog"></code><button id="cmdLogCopy" data-copy="">copy</button></div>
+    <div class="mrow"><b>Review local changes vs main</b> — a branch, or uncommitted edits:</div>
+    <div class="cmd"><code id="cmdDiff"></code><button id="cmdDiffCopy" data-copy="">copy</button></div>
+    <div class="mrow">The command puts the output straight on your clipboard — run it, then:</div>
+    <div><button id="clipBtn" class="primary">📋 Read clipboard</button></div>
+    <div class="mrow">Prefer a file? Redirect with <code>&gt; gitlog.txt</code> and drop it anywhere on the page (any encoding works, PowerShell's UTF-16 included).</div>
+    <textarea id="gitText" placeholder="…or paste the output here" spellcheck="false"></textarea>
     <div class="mrow" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px">
       <input type="text" id="prInput" placeholder="PR: owner/repo#123 or GitHub PR URL" style="flex:1; min-width:220px">
       <button id="prFetch">Fetch PR diff</button>
@@ -2080,22 +2083,27 @@ addEventListener("drop", async e => {
   const items = [...(e.dataTransfer?.items || [])];
   const entry = items[0]?.webkitGetAsEntry?.();
   if (!entry) return;
+  const handlePromise = items[0]?.getAsFileSystemHandle ? items[0].getAsFileSystemHandle() : null;
   if (entry.isFile){
     // a dropped git log / diff file becomes history or review data, not a dataset
     try {
       const file = await new Promise((res, rej) => entry.file(res, rej));
       if (file.size < 80 * 1024 * 1024){
-        const text = await file.text();
+        const text = await readTextSmart(file);
         if (ingestGitText(text)) return;
       }
     } catch {}
+    setStatus(`"${entry.name}" didn't parse as git log --numstat or git diff output — drop a folder for a codebase, or check the Git… dialog for the exact commands.`, true);
+    return;
   }
   if (indexing){ setStatus("Indexing is still running — wait for it to finish.", true); return; }
   setStatus("Reading dropped folder…");
   scanNote = 0;
   try {
     const entries = await walkDroppedEntry(entry, new Set(excludeList()));
-    rawEntries = entries; rootHandle = null;
+    let h = null;
+    try { h = handlePromise ? await handlePromise : null; } catch {}
+    rawEntries = entries; rootHandle = (h && h.kind === "directory") ? h : null;
     if (setDataset(entries, entry.name, "local", null)) buildIndex();
   } catch (err){ setStatus("Failed to read folder: " + err.message, true); }
 });
@@ -2208,7 +2216,25 @@ function parseDiff(text){
   }
   return {files, byPath: new Map(files.map(f => [f.path, f]))};
 }
+function normalizeGitText(text){
+  if (!text) return text;
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  // a UTF-16 file read as UTF-8 arrives with interleaved NULs — strip them and the text survives
+  if (text.includes("\u0000")) text = text.replace(/\u0000/g, "");
+  return text.replace(/\r\n?/g, "\n");
+}
+async function readTextSmart(file){
+  const u8 = new Uint8Array(await file.arrayBuffer());
+  if (u8[0] === 0xFF && u8[1] === 0xFE) return new TextDecoder("utf-16le").decode(u8);
+  if (u8[0] === 0xFE && u8[1] === 0xFF) return new TextDecoder("utf-16be").decode(u8);
+  let nul = 0;
+  const n = Math.min(u8.length, 4096);
+  for (let i = 0; i < n; i++) if (u8[i] === 0) nul++;
+  if (nul > n / 8) return new TextDecoder(u8[0] === 0 ? "utf-16be" : "utf-16le").decode(u8);
+  return new TextDecoder().decode(u8);
+}
 function ingestGitText(text){
+  text = normalizeGitText(text);
   if (!text || text.length < 20) return false;
   const commitCount = (text.match(/^commit [0-9a-f]{7,40}/gm) || []).length;
   const hasDiff = /^diff --git /m.test(text);
@@ -2401,9 +2427,89 @@ $("vTabDiff").onclick = () => { if (viewerFileId != null) openViewer(viewerFileI
 $("vTabFile").onclick = () => { if (viewerFileId != null) openViewer(viewerFileId, null, {tab:"file"}); };
 $("colorSel").onchange = e => { colorMode = e.target.value; drawMap(); };
 /* ---- modal, PR fetch, paste ---- */
-$("gitBtn").onclick = () => {
+(function initGitCmds(){
+  const pipe = /Win/i.test(navigator.platform || "") ? "clip" : "pbcopy";
+  for (const [id, cmd] of [
+    ["cmdLog", `git log --numstat --date=short --no-color -n 5000 | ${pipe}`],
+    ["cmdDiff", `git diff main --no-color | ${pipe}`],
+  ]){
+    $(id).textContent = cmd;
+    $(id + "Copy").setAttribute("data-copy", cmd);
+  }
+})();
+$("clipBtn").onclick = async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text || !text.trim()){ setStatus("Clipboard is empty — run one of the commands first.", true); return; }
+    if (ingestGitText(text)) $("gitModal").style.display = "none";
+    else setStatus("Clipboard didn't look like git log --numstat or git diff output.", true);
+  } catch (err){
+    setStatus("Couldn't read the clipboard (" + err.message + ") — paste into the box instead.", true);
+  }
+};
+let originRepo = null;
+async function detectOrigin(){
+  if (gh){ originRepo = {owner: gh.owner, repo: gh.repo}; return; }
+  originRepo = null;
+  if (!rootHandle) return;
+  try {
+    const gitDir = await rootHandle.getDirectoryHandle(".git");
+    const cfg = await (await (await gitDir.getFileHandle("config")).getFile()).text();
+    const m = cfg.match(/github\.com[:\/]([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\s|$)/);
+    if (m) originRepo = {owner: m[1], repo: m[2]};
+  } catch {}
+}
+async function fetchOriginHistory(){
+  if (!originRepo) return;
+  const token = $("tokenInput").value.trim();
+  const cap = token ? 100 : 20;
+  const {owner, repo} = originRepo;
+  try {
+    setStatus(`Fetching the last ${cap} commits of ${owner}/${repo} from GitHub…`);
+    const list = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=${cap}`, token);
+    const commits = [];
+    for (let i = 0; i < list.length; i += 5){
+      await Promise.all(list.slice(i, i + 5).map(async c => {
+        try {
+          const d = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/commits/${c.sha}`, token);
+          commits.push({
+            hash: c.sha,
+            author: (c.commit.author && c.commit.author.name) || (c.author && c.author.login) || "",
+            date: Date.parse(c.commit.author && c.commit.author.date) || 0,
+            subject: (c.commit.message || "").split("\n")[0],
+            merge: (c.parents || []).length > 1,
+            files: (d.files || []).map(f => f.filename),
+            adds: (d.stats && d.stats.additions) || 0,
+            dels: (d.stats && d.stats.deletions) || 0,
+          });
+        } catch {}
+      }));
+      setProgress(Math.min(1, (i + 5) / list.length));
+    }
+    setProgress(null);
+    $("gitModal").style.display = "none";
+    applyLog(commits);
+    setStatus($("statusText").textContent + ` — via GitHub API, last ${commits.length} commits${token ? "" : " (add a token to fetch 100)"}`);
+  } catch (err){
+    setProgress(null);
+    setStatus("Origin fetch failed: " + err.message, true);
+  }
+}
+$("gitBtn").onclick = async () => {
   if (gh && !$("prInput").value) $("prInput").value = `${gh.owner}/${gh.repo}#`;
   $("gitModal").style.display = "flex";
+  await detectOrigin();
+  const row = $("originRow");
+  if (originRepo){
+    row.style.display = "";
+    row.innerHTML = `<b>No terminal needed:</b> origin is <code>${escapeHtml(originRepo.owner)}/${escapeHtml(originRepo.repo)}</code> — `;
+    const b = document.createElement("button");
+    b.textContent = "Fetch history from GitHub";
+    b.onclick = fetchOriginHistory;
+    row.appendChild(b);
+  } else {
+    row.style.display = "none";
+  }
 };
 $("gitCancel").onclick = () => $("gitModal").style.display = "none";
 $("gitModal").addEventListener("mousedown", e => { if (e.target === $("gitModal")) $("gitModal").style.display = "none"; });

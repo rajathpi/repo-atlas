@@ -64,12 +64,14 @@ Once indexed, searching every file's contents is instant: `file:line` hits with 
 
 Shareable links work too: `repo-atlas.html#gh=vllm-project/vllm` auto-loads a GitHub repo, `#demo` loads the sample (`#demo-graph`, `#demo-hotspots`, `#demo-review`, `#demo-grep` jump straight to each view).
 
-For git features, run either command in your repo and drop the output file on the page (or paste it — the format is auto-detected):
+For git features, the fastest path needs no files at all — pipe to the clipboard, then hit **📋 Read clipboard** in the `Git…` dialog:
 
 ```
-git log --numstat --date=short --no-color -n 5000 > gitlog.txt   # hotspots + history
-git diff main --no-color > changes.diff                          # review mode
+git log --numstat --date=short --no-color -n 5000 | clip    # hotspots + history   (macOS: | pbcopy)
+git diff main --no-color | clip                             # review mode
 ```
+
+Or skip the terminal entirely: when the loaded folder's git origin is on GitHub (or the repo was loaded from GitHub), the `Git…` dialog detects it and offers **Fetch history from GitHub** — one click for hotspots and the commit feed (recent commits; add a token to fetch more). Redirected files (`> gitlog.txt`) dropped on the page also work, in any encoding — PowerShell's UTF-16 included.
 
 ## Controls
 
