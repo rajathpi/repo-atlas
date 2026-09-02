@@ -64,7 +64,7 @@ Once indexed, searching every file's contents is instant: `file:line` hits with 
 
 Shareable links work too: `repo-atlas.html#gh=vllm-project/vllm` auto-loads a GitHub repo, `#demo` loads the sample (`#demo-graph`, `#demo-hotspots`, `#demo-review`, `#demo-grep` jump straight to each view).
 
-For git features, the fastest path needs no files at all — pipe to the clipboard, then hit **📋 Read clipboard** in the `Git…` dialog:
+For git features, the fastest path needs no files at all: in the `Git…` dialog hit **▶ copy & run** — it copies the command and watches your clipboard, so after you run it in a terminal the output loads by itself when you switch back to the tab:
 
 ```
 git log --numstat --date=short --no-color -n 5000 | clip    # hotspots + history   (macOS: | pbcopy)

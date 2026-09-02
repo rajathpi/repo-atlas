@@ -297,11 +297,10 @@
     <h3>Git history &amp; review</h3>
     <div id="originRow" class="mrow" style="display:none"></div>
     <div class="mrow"><b>Hotspots + history</b> — who changed what, treemap colored by churn:</div>
-    <div class="cmd"><code id="cmdLog"></code><button id="cmdLogCopy" data-copy="">copy</button></div>
+    <div class="cmd"><code id="cmdLog"></code><button id="cmdLogCopy" data-copy="">▶ copy &amp; run</button></div>
     <div class="mrow"><b>Review local changes vs main</b> — a branch, or uncommitted edits:</div>
-    <div class="cmd"><code id="cmdDiff"></code><button id="cmdDiffCopy" data-copy="">copy</button></div>
-    <div class="mrow">The command puts the output straight on your clipboard — run it, then:</div>
-    <div><button id="clipBtn" class="primary">📋 Read clipboard</button></div>
+    <div class="cmd"><code id="cmdDiff"></code><button id="cmdDiffCopy" data-copy="">▶ copy &amp; run</button></div>
+    <div class="mrow"><b>▶ copy &amp; run</b> copies the command and watches your clipboard: paste it in a terminal, run it, and the output loads by itself the moment you switch back here (3-min window). <button id="clipBtn" style="font-size:12px">📋 Read clipboard now</button></div>
     <div class="mrow">Prefer a file? Redirect with <code>&gt; gitlog.txt</code> and drop it anywhere on the page (any encoding works, PowerShell's UTF-16 included).</div>
     <textarea id="gitText" placeholder="…or paste the output here" spellcheck="false"></textarea>
     <div class="mrow" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px">
@@ -2540,11 +2539,39 @@ $("gitLoad").onclick = () => {
   if (ingestGitText($("gitText").value)){ $("gitModal").style.display = "none"; $("gitText").value = ""; }
   else setStatus("Couldn't recognize that as git log --numstat or git diff output.", true);
 };
+let clipWatch = null;
+function disarmClipWatch(){
+  if (clipWatch){ clearInterval(clipWatch.timer); removeEventListener("focus", clipWatch.onFocus); clipWatch = null; }
+}
+function armClipWatch(copiedCmd){
+  disarmClipWatch();
+  const until = Date.now() + 180000;
+  const tryRead = async () => {
+    if (!clipWatch) return;
+    if (Date.now() > until){ disarmClipWatch(); return; }
+    if (!document.hasFocus()) return;
+    try {
+      const t = await navigator.clipboard.readText();
+      if (t && t.trim() && t.trim() !== copiedCmd.trim() && ingestGitText(t)){
+        disarmClipWatch();
+        $("gitModal").style.display = "none";
+      }
+    } catch {}
+  };
+  clipWatch = {timer: setInterval(tryRead, 1500), onFocus: tryRead};
+  addEventListener("focus", tryRead);
+  setStatus("Command copied — run it in your terminal; the output loads by itself when you switch back to this tab.");
+}
 document.querySelectorAll("#gitModal [data-copy]").forEach(b => {
+  const label = b.textContent;
   b.onclick = async () => {
-    try { await navigator.clipboard.writeText(b.getAttribute("data-copy")); b.textContent = "copied!"; }
-    catch { b.textContent = "select & copy"; }
-    setTimeout(() => { b.textContent = "copy"; }, 1500);
+    const cmd = b.getAttribute("data-copy");
+    try {
+      await navigator.clipboard.writeText(cmd);
+      b.textContent = "copied — waiting…";
+      if (cmd.startsWith("git ")) armClipWatch(cmd);
+    } catch { b.textContent = "select & copy manually"; }
+    setTimeout(() => { b.textContent = label; }, 2500);
   };
 });
 function parsePR(str){
