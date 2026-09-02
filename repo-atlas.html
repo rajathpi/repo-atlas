@@ -157,6 +157,22 @@
   #vBody mark{background:#9e6a03; color:#fff; border-radius:2px; padding:0 1px}
   #vBody .cm{color:#7d8590}
   #vBody .st{color:#a5d6ff}
+  #vBody .hunk{color:#58a6ff; background:rgba(88,166,255,.08); padding:2px 16px 2px 60px; font:11px Consolas,monospace; border-top:1px solid var(--border); margin-top:2px}
+  #vBody .ln.dadd{background:rgba(63,185,80,.14)}
+  #vBody .ln.ddel{background:rgba(248,81,73,.14)}
+  #vBody .dsum{padding:6px 16px 6px 60px; color:var(--dim); font-size:12px}
+  #vTabs{display:inline-flex; gap:4px}
+  #vTabs button{padding:3px 9px; font-size:12px}
+  #vTabs button.active{border-color:var(--accent); color:var(--accent)}
+  .badge-a{color:#3fb950} .badge-m{color:#d29922} .badge-d{color:#f85149} .badge-r{color:#a371f7}
+  #gitModal{position:fixed; inset:0; background:rgba(1,4,9,.72); z-index:40; display:none; align-items:center; justify-content:center; padding:20px}
+  #gitModal .mbox{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px 20px; width:min(680px,94vw); max-height:90vh; overflow-y:auto}
+  #gitModal h3{font-size:15px; margin-bottom:6px}
+  #gitModal .mrow{font-size:12.5px; color:var(--dim); margin:10px 0 4px}
+  #gitModal .mrow b{color:var(--text)}
+  #gitModal .cmd{display:flex; gap:8px; align-items:center; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:6px 10px}
+  #gitModal .cmd code{flex:1; font:12px Consolas,monospace; color:#a5d6ff; overflow-x:auto; white-space:nowrap}
+  #gitModal textarea{width:100%; height:100px; margin-top:12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font:12px Consolas,monospace; padding:8px; resize:vertical}
 </style>
 </head>
 <body>
@@ -177,6 +193,13 @@
   <button class="tab active" id="tabMap">Treemap</button>
   <button class="tab" id="tabGraph">Graph</button>
   <div id="breadcrumb"></div>
+  <label class="small" id="colorWrap" style="padding-bottom:6px; white-space:nowrap">color:
+    <select id="colorSel">
+      <option value="lang">language</option>
+      <option value="churn" disabled>churn (git log)</option>
+      <option value="diff" disabled>changes (diff)</option>
+    </select>
+  </label>
   <div id="graphCtrls" style="display:none">
     <button id="gReset">⌂ Top level</button>
     <button id="gBack" style="display:none">← Back to folders</button>
@@ -191,6 +214,7 @@
       <option value="content">content</option>
     </select>
     <input type="search" id="searchInput" placeholder="filter / grep…">
+    <button id="gitBtn" title="Load git history (hotspots + who changed what) or a diff / PR (review mode)">Git…</button>
     <button id="pngBtn" title="Export current view as PNG">PNG</button>
   </div>
 </div>
@@ -234,6 +258,21 @@
       <h2>Most depended-on</h2>
       <div id="hubBody"></div>
     </section>
+    <section id="secReview" style="display:none">
+      <h2>Review <span class="x" id="revClear">✕</span></h2>
+      <div id="revSummary" style="font-size:12.5px; margin-bottom:4px"></div>
+      <label class="chk" style="display:flex; margin-bottom:6px"><input type="checkbox" id="revImpact"> also highlight direct dependents</label>
+      <div id="revBody"></div>
+    </section>
+    <section id="secHotspots" style="display:none">
+      <h2>Hotspots</h2>
+      <div id="hotBody"></div>
+    </section>
+    <section id="secHistory" style="display:none">
+      <h2>History <span class="x" id="histClear">✕</span></h2>
+      <div id="histAuthors" style="font-size:12px; color:var(--dim); margin-bottom:6px"></div>
+      <div id="histBody"></div>
+    </section>
     <section>
       <h2>Largest files</h2>
       <div id="bigFiles"></div>
@@ -243,6 +282,7 @@
     <div id="vHead">
       <span id="vTitle"></span>
       <span id="vMeta"></span>
+      <span id="vTabs" style="display:none"><button id="vTabDiff">Diff</button><button id="vTabFile">Full file</button></span>
       <button id="vGraph" title="Show this file's dependencies in the Graph view">Graph</button>
       <button id="vClose">✕</button>
     </div>
@@ -250,6 +290,27 @@
     <div id="vBody"></div>
   </div>
 </main>
+<div id="gitModal">
+  <div class="mbox">
+    <h3>Git history &amp; review</h3>
+    <div class="mrow">Drop the output file anywhere on the page, paste below, or fetch a PR — the format is auto-detected.</div>
+    <div class="mrow"><b>Hotspots + history</b> — who changed what, treemap colored by churn:</div>
+    <div class="cmd"><code>git log --numstat --date=short --no-color -n 5000 &gt; gitlog.txt</code><button data-copy="git log --numstat --date=short --no-color -n 5000 > gitlog.txt">copy</button></div>
+    <div class="mrow"><b>Review local changes vs main</b> — a branch, or uncommitted edits (e.g. what Claude just changed):</div>
+    <div class="cmd"><code>git diff main --no-color &gt; changes.diff</code><button data-copy="git diff main --no-color > changes.diff">copy</button></div>
+    <textarea id="gitText" placeholder="…or paste git log --numstat / git diff output here" spellcheck="false"></textarea>
+    <div class="mrow" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px">
+      <input type="text" id="prInput" placeholder="PR: owner/repo#123 or GitHub PR URL" style="flex:1; min-width:220px">
+      <button id="prFetch">Fetch PR diff</button>
+      <button id="prList" title="List recently merged PRs of that repo">Merged PRs…</button>
+    </div>
+    <div id="prRows"></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+      <button id="gitCancel">Close</button>
+      <button id="gitLoad" class="primary">Load pasted text</button>
+    </div>
+  </div>
+</div>
 <div id="tooltip"></div>
 
 <script>
@@ -308,6 +369,12 @@ let contents = [];         // id -> string|null
 let edgesOut = [];         // id -> Map(toId -> 'imp'|'ref')
 let edgesIn = [];          // id -> Map(fromId -> kind)
 let edgeEvidence = new Map(); // "from|to" -> [line numbers in the FROM file where the reference occurs]
+let churnMap = new Map();     // path -> {commits, score, last, authors:Map}
+let churnScale = 1;
+let gitCommits = [];          // parsed git log
+let diffData = null;          // {files:[...], byPath:Map} parsed unified diff
+let colorMode = "lang";       // lang | churn | diff
+let highlightedCommit = null;
 let indexed = false, indexing = false;
 let rawEntries = null;     // as loaded, before excludes — lets Apply re-filter without reloading
 let rootHandle = null;     // FileSystemDirectoryHandle when picked via showDirectoryPicker — lets Apply re-scan
@@ -381,6 +448,7 @@ function setDataset(entries, name, src, ghInfo, skipExcludes){
   edgesIn = files.map(() => new Map());
   tree = buildTree();
   currentRoot = tree;
+  if (churnMap.size || diffData) annotateOverlays();
   $("dropHint").style.display = "none";
   $("secHubs").style.display = "none";
   graph.expanded = new Set(); graph.mode = "folders"; graph.root = ""; graph.ego = null; graph.built = false;
@@ -541,7 +609,7 @@ function drawMapNode(node){
   const dimmed = dimActive() && !node.matched;
   mctx.globalAlpha = dimmed ? 0.12 : 1;
   if (node.isFile || node.solid){
-    mctx.fillStyle = node.domColor;
+    mctx.fillStyle = node.isFile ? fileFill(node) : solidFill(node);
     mctx.fillRect(r.x, r.y, r.w, r.h);
     mctx.strokeStyle = "rgba(0,0,0,.45)"; mctx.lineWidth = 1;
     if (r.w > 2.5 && r.h > 2.5) mctx.strokeRect(r.x+.5, r.y+.5, r.w-1, r.h-1);
@@ -1326,7 +1394,7 @@ function hlLine(escLine, cm){
   }
   return out;
 }
-async function openViewer(fileId, line){
+async function openViewer(fileId, line, opts = {}){
   if (fileId == null) return;
   viewerFileId = fileId;
   const f = files[fileId];
@@ -1366,6 +1434,16 @@ async function openViewer(fileId, line){
       };
     });
   } else { depEl.style.display = "none"; }
+  const hasDiff = !!(diffData && diffData.byPath.has(f.path));
+  $("vTabs").style.display = hasDiff ? "" : "none";
+  const wantDiff = hasDiff && opts.tab !== "file";
+  $("vTabDiff").classList.toggle("active", wantDiff);
+  $("vTabFile").classList.toggle("active", hasDiff && !wantDiff);
+  if (wantDiff){
+    $("vBody").innerHTML = renderDiffHtml(f.path);
+    $("vBody").scrollTop = 0;
+    return;
+  }
   let text;
   try { text = await getText(fileId); }
   catch (e){ $("vBody").innerHTML = `<div style="padding:14px;color:var(--danger)">could not load content (${escapeHtml(e.message)})</div>`; return; }
@@ -1478,6 +1556,7 @@ function switchView(v){
   cvsGraph.style.display = v === "graph" ? "block" : "none";
   resizeCanvases();
   $("breadcrumb").style.display = "flex"; // shared with the graph: crumbs set the graph's scope too
+  $("colorWrap").style.display = v === "map" ? "" : "none";
   $("graphCtrls").style.display = v === "graph" ? "flex" : "none";
   if (v === "graph" && files.length){
     syncGraphRoot();
@@ -1635,8 +1714,15 @@ cvsMap.addEventListener("mousemove", e => {
   if (node && node !== currentRoot){
     const total = Math.max(currentRoot.total, 1);
     const pct = (node.total/total*100).toFixed(2);
+    let extra = "";
+    if (node.isFile){
+      const ce = churnMap.get(node.path);
+      if (ce) extra += `<br>changed ${ce.commits}× · last ${ce.last ? new Date(ce.last).toISOString().slice(0,10) : "?"} · mostly ${escapeHtml(topAuthorOf(ce))}`;
+      const df = diffData && diffData.byPath.get(node.path);
+      if (df) extra += `<br>in this diff: <span class="badge-a">+${df.adds}</span> <span class="badge-d">−${df.dels}</span>`;
+    }
     tooltip.innerHTML = node.isFile
-      ? `<div class="path">${escapeHtml(node.path)}</div><div class="meta">${escapeHtml(node.lang[0])} · ${humanSize(node.size)} · ${pct}% of view · click to read</div>`
+      ? `<div class="path">${escapeHtml(node.path)}</div><div class="meta">${escapeHtml(node.lang[0])} · ${humanSize(node.size)} · ${pct}% of view · click to read${extra}</div>`
       : `<div class="path">${escapeHtml(node.path || node.name)}/</div><div class="meta">${fmtInt(node.fileCount)} files · ${humanSize(node.size)} · ${pct}% of view</div>`;
     tooltip.style.display = "block";
     positionTooltip(e);
@@ -1994,6 +2080,16 @@ addEventListener("drop", async e => {
   const items = [...(e.dataTransfer?.items || [])];
   const entry = items[0]?.webkitGetAsEntry?.();
   if (!entry) return;
+  if (entry.isFile){
+    // a dropped git log / diff file becomes history or review data, not a dataset
+    try {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      if (file.size < 80 * 1024 * 1024){
+        const text = await file.text();
+        if (ingestGitText(text)) return;
+      }
+    } catch {}
+  }
   if (indexing){ setStatus("Indexing is still running — wait for it to finish.", true); return; }
   setStatus("Reading dropped folder…");
   scanNote = 0;
@@ -2002,6 +2098,375 @@ addEventListener("drop", async e => {
     rawEntries = entries; rootHandle = null;
     if (setDataset(entries, entry.name, "local", null)) buildIndex();
   } catch (err){ setStatus("Failed to read folder: " + err.message, true); }
+});
+
+/* ================= git: hotspots, history, review ================= */
+function topAuthorOf(e){
+  let best = "?", n = -1;
+  for (const [a, c] of e.authors) if (c > n){ n = c; best = a; }
+  return best;
+}
+function fileFill(node){
+  if (colorMode === "churn") return churnColor(node.churnScore || 0);
+  if (colorMode === "diff"){
+    const df = diffData && diffData.byPath.get(node.path);
+    if (!df) return "#232a32";
+    return df.status === "A" ? "#3fb950" : df.status === "R" ? "#a371f7" : "#d29922";
+  }
+  return node.domColor;
+}
+function solidFill(node){
+  if (colorMode === "churn") return churnColor(node.churnMax || 0);
+  if (colorMode === "diff") return node.diffTouched ? "#9e6a03" : "#20262d";
+  return node.domColor;
+}
+function churnColor(s){
+  if (!s) return "#20262e";
+  const t = Math.min(1, s / (churnScale || 1));
+  return `hsl(${Math.round(50 - 50*t)},85%,${Math.round(38 + 16*t)}%)`;
+}
+function annotateOverlays(){
+  if (!tree) return;
+  const scores = [];
+  (function walk(n){
+    if (n.isFile){
+      const e = churnMap.get(n.path);
+      n.churnScore = e ? e.score : 0;
+      n.churnMax = n.churnScore;
+      n.diffTouched = !!(diffData && diffData.byPath.has(n.path));
+      if (n.churnScore > 0) scores.push(n.churnScore);
+      return;
+    }
+    n.churnMax = 0; n.diffTouched = false;
+    for (const k of n.kids){
+      walk(k);
+      if (k.churnMax > n.churnMax) n.churnMax = k.churnMax;
+      n.diffTouched = n.diffTouched || k.diffTouched;
+    }
+  })(tree);
+  scores.sort((a,b) => a - b);
+  churnScale = scores.length ? scores[Math.floor(scores.length * 0.9)] : 1;
+}
+/* ---- parsing ---- */
+function parseLog(text){
+  const commits = [];
+  let cur = null;
+  for (const raw of text.split("\n")){
+    let m;
+    if ((m = raw.match(/^commit ([0-9a-f]{7,40})\b/))){
+      cur = {hash:m[1], author:"", date:0, subject:"", files:[], adds:0, dels:0, merge:false};
+      commits.push(cur);
+    } else if (cur && /^Merge: /.test(raw)) cur.merge = true;
+    else if (cur && (m = raw.match(/^Author:\s+([^<]+)/))) cur.author = m[1].trim();
+    else if (cur && (m = raw.match(/^Date:\s+(.*)$/))){ const t = Date.parse(m[1].trim()); cur.date = isNaN(t) ? 0 : t; }
+    else if ((m = raw.match(/^(\d+|-)\t(\d+|-)\t(.+)$/))){
+      if (!cur){ cur = {hash:"", author:"", date:0, subject:"", files:[], adds:0, dels:0, merge:false}; commits.push(cur); }
+      let p = m[3].replace(/\{([^{}]*) => ([^{}]*)\}/g, "$2").replace(/\/{2,}/g, "/");
+      const arrow = p.indexOf(" => ");
+      if (arrow >= 0) p = p.slice(arrow + 4);
+      if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
+      cur.files.push(p);
+      if (m[1] !== "-") cur.adds += +m[1];
+      if (m[2] !== "-") cur.dels += +m[2];
+    }
+    else if (cur && (m = raw.match(/^ {4}(.*)/))){ if (!cur.subject) cur.subject = m[1].trim(); }
+    else if (!raw.includes("\t") && (m = raw.match(/^([0-9a-f]{7,40}) (.+)$/))){
+      cur = {hash:m[1], author:"", date:0, subject:m[2].trim(), files:[], adds:0, dels:0, merge:false};
+      commits.push(cur);
+    }
+  }
+  return commits.filter(c => c.files.length || c.subject);
+}
+function parseDiff(text){
+  const files = [];
+  let cur = null, hunk = null;
+  for (const raw of text.split("\n")){
+    let m;
+    if ((m = raw.match(/^diff --git a\/(.*) b\/(.*)$/))){
+      cur = {oldPath:m[1], path:m[2], status:"M", adds:0, dels:0, binary:false, hunks:[]};
+      files.push(cur); hunk = null;
+      continue;
+    }
+    if (!cur) continue;
+    if (hunk === null){
+      if (/^new file mode/.test(raw)) cur.status = "A";
+      else if (/^deleted file mode/.test(raw)) cur.status = "D";
+      else if ((m = raw.match(/^rename from (.*)$/))){ cur.oldPath = m[1]; cur.status = "R"; }
+      else if ((m = raw.match(/^rename to (.*)$/))) cur.path = m[1];
+      else if ((m = raw.match(/^\+\+\+ (?:b\/)?(.*)$/))){ if (m[1] !== "/dev/null") cur.path = m[1].replace(/^"|"$/g, ""); }
+      else if ((m = raw.match(/^--- (?:a\/)?(.*)$/))){ if (m[1] !== "/dev/null") cur.oldPath = m[1].replace(/^"|"$/g, ""); }
+      else if (/^Binary files /.test(raw)) cur.binary = true;
+    }
+    if ((m = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/))){
+      hunk = {oldStart:+m[1], newStart:+m[2], header:m[3], lines:[]};
+      cur.hunks.push(hunk);
+    } else if (hunk && /^[ +\-]/.test(raw)){
+      const t = raw[0];
+      hunk.lines.push([t, raw.slice(1)]);
+      if (t === "+") cur.adds++; else if (t === "-") cur.dels++;
+    }
+  }
+  return {files, byPath: new Map(files.map(f => [f.path, f]))};
+}
+function ingestGitText(text){
+  if (!text || text.length < 20) return false;
+  const commitCount = (text.match(/^commit [0-9a-f]{7,40}/gm) || []).length;
+  const hasDiff = /^diff --git /m.test(text);
+  const hasNumstat = /^(\d+|-)\t(\d+|-)\t.+/m.test(text);
+  if (hasDiff && commitCount < 2){ applyDiff(parseDiff(text)); return true; }
+  if (commitCount >= 1 || hasNumstat){
+    if (!hasNumstat){
+      setStatus(hasDiff ? "That looks like git log -p — use git log --numstat instead." : "git log loaded but without file stats — add --numstat.", true);
+      return true;
+    }
+    applyLog(parseLog(text));
+    return true;
+  }
+  return false;
+}
+/* ---- apply: history / hotspots ---- */
+function applyLog(commits){
+  gitCommits = commits.sort((a,b) => b.date - a.date);
+  churnMap = new Map(); highlightedCommit = null;
+  const now = Date.now();
+  for (const c of gitCommits){
+    if (!c.merge && /^Merge (pull request|branch|remote)/.test(c.subject)) c.merge = true;
+    const age = c.date ? Math.max(0, (now - c.date) / 864e5) : 400;
+    const w = Math.exp(-age / 90);
+    for (const p of c.files){
+      let e = churnMap.get(p);
+      if (!e){ e = {commits:0, score:0, last:0, authors:new Map()}; churnMap.set(p, e); }
+      e.commits++; e.score += w;
+      if (c.date > e.last) e.last = c.date;
+      if (c.author) e.authors.set(c.author, (e.authors.get(c.author) || 0) + 1);
+    }
+  }
+  $("colorSel").querySelector('[value="churn"]').disabled = false;
+  annotateOverlays();
+  const nAuthors = new Set(gitCommits.map(c => c.author).filter(Boolean)).size;
+  if (files.length){
+    let hit = 0;
+    for (const p of churnMap.keys()) if (pathToId.has(p)) hit++;
+    if (churnMap.size && hit / churnMap.size < 0.3){
+      setStatus(`History loaded, but only ${hit} of ${fmtInt(churnMap.size)} paths match the loaded folder — run the git command inside the folder you loaded.`, true);
+    } else {
+      colorMode = "churn"; $("colorSel").value = "churn";
+      switchView("map");
+      setStatus(`History: ${fmtInt(gitCommits.length)} commits by ${nAuthors} author${nAuthors === 1 ? "" : "s"} — treemap colored by churn (hot = frequently + recently changed).`);
+    }
+  } else {
+    setStatus(`History parsed: ${fmtInt(gitCommits.length)} commits — load the matching folder to see hotspots on the map.`);
+  }
+  renderHotspots(); renderHistory(); drawMap();
+}
+function renderHotspots(){
+  const sec = $("secHotspots");
+  const rows = [...churnMap.entries()].filter(([p]) => pathToId.has(p));
+  if (!rows.length){ sec.style.display = "none"; return; }
+  sec.style.display = "";
+  rows.sort((a,b) => b[1].score - a[1].score);
+  const el = $("hotBody"); el.innerHTML = "";
+  for (const [p, e] of rows.slice(0, 12)){
+    const row = document.createElement("div"); row.className = "fileRow";
+    row.title = `changed ${e.commits}× · last ${e.last ? new Date(e.last).toISOString().slice(0,10) : "?"} · mostly ${topAuthorOf(e)}`;
+    row.innerHTML = `<span class="fp">${escapeHtml(p)}</span><span class="fs">${e.commits}× · ${escapeHtml(topAuthorOf(e).split(" ")[0])}</span>`;
+    row.onclick = () => { const id = pathToId.get(p); if (id != null) openViewer(id); };
+    el.appendChild(row);
+  }
+}
+function renderHistory(){
+  const sec = $("secHistory");
+  if (!gitCommits.length){ sec.style.display = "none"; return; }
+  sec.style.display = "";
+  const byAuthor = new Map();
+  for (const c of gitCommits) if (c.author) byAuthor.set(c.author, (byAuthor.get(c.author) || 0) + 1);
+  $("histAuthors").textContent = [...byAuthor.entries()].sort((a,b) => b[1] - a[1]).slice(0, 5)
+    .map(([a, n]) => `${a} ${n}`).join(" · ");
+  const el = $("histBody"); el.innerHTML = "";
+  for (const c of gitCommits.slice(0, 40)){
+    const row = document.createElement("div"); row.className = "fileRow";
+    const d = c.date ? new Date(c.date).toISOString().slice(5, 10) : "";
+    row.title = `${c.hash.slice(0, 10)} — ${c.files.length} files, +${c.adds} −${c.dels}. Click to highlight the touched files.`;
+    row.innerHTML = `<span class="fp">${c.merge ? "⑂ " : ""}${escapeHtml(c.subject || c.hash.slice(0, 10))}</span><span class="fs">${escapeHtml((c.author || "").split(" ")[0])} · ${d}</span>`;
+    row.onclick = () => toggleCommitHighlight(c);
+    el.appendChild(row);
+  }
+}
+function toggleCommitHighlight(c){
+  if (highlightedCommit === c){
+    highlightedCommit = null; matchedFiles = null;
+    setStatus("Commit highlight cleared.");
+  } else {
+    const set = new Set();
+    for (const p of c.files){ const id = pathToId.get(p); if (id != null) set.add(id); }
+    matchedFiles = set; highlightedCommit = c;
+    setStatus(`"${c.subject || c.hash.slice(0, 10)}" — ${c.author || "?"} · highlighting ${set.size} touched file${set.size === 1 ? "" : "s"}.`);
+  }
+  drawMap(); drawGraph();
+}
+$("histClear").onclick = () => {
+  gitCommits = []; churnMap = new Map(); highlightedCommit = null;
+  if (colorMode === "churn"){ colorMode = "lang"; $("colorSel").value = "lang"; }
+  $("colorSel").querySelector('[value="churn"]').disabled = true;
+  if (!diffData) matchedFiles = null;
+  annotateOverlays(); renderHotspots(); renderHistory(); drawMap(); drawGraph();
+  setStatus("Git history cleared.");
+};
+/* ---- apply: review (diff) ---- */
+function applyDiff(d){
+  if (!d.files.length){ setStatus("That looked like a diff, but no file changes were found in it.", true); return; }
+  diffData = d;
+  if (!files.length){
+    const entries = d.files.filter(f => f.status !== "D").map(f => ({path:f.path, size:(f.adds + f.dels + 1) * 40}));
+    if (entries.length){ rawEntries = entries; setDataset(entries, "diff-only view", "local", null); }
+  }
+  $("colorSel").querySelector('[value="diff"]').disabled = false;
+  colorMode = "diff"; $("colorSel").value = "diff";
+  annotateOverlays(); renderReview(); reviewApply();
+  switchView("map");
+  const adds = d.files.reduce((s, f) => s + f.adds, 0), dels = d.files.reduce((s, f) => s + f.dels, 0);
+  setStatus(`Review: ${d.files.length} files changed, +${fmtInt(adds)} −${fmtInt(dels)} — changed files highlighted; click one in the Review list to read its diff.`);
+}
+function reviewApply(){
+  if (!diffData) return;
+  const changed = new Set();
+  for (const df of diffData.files){ const id = pathToId.get(df.path); if (id != null) changed.add(id); }
+  const show = new Set(changed);
+  if ($("revImpact").checked && indexed){
+    for (const id of changed) for (const from of edgesIn[id].keys()) show.add(from);
+  }
+  matchedFiles = show; highlightedCommit = null;
+  drawMap(); drawGraph();
+}
+function renderReview(){
+  const sec = $("secReview");
+  if (!diffData){ sec.style.display = "none"; return; }
+  sec.style.display = "";
+  const adds = diffData.files.reduce((s, f) => s + f.adds, 0), dels = diffData.files.reduce((s, f) => s + f.dels, 0);
+  $("revSummary").innerHTML = `<b>${diffData.files.length}</b> files · <span class="badge-a">+${fmtInt(adds)}</span> <span class="badge-d">−${fmtInt(dels)}</span>`;
+  $("revImpact").disabled = !indexed;
+  const body = $("revBody"); body.innerHTML = "";
+  for (const df of diffData.files){
+    const row = document.createElement("div"); row.className = "fileRow";
+    const cls = df.status === "A" ? "badge-a" : df.status === "D" ? "badge-d" : df.status === "R" ? "badge-r" : "badge-m";
+    row.innerHTML = `<span class="${cls}" style="flex:0 0 12px">${df.status}</span><span class="fp">${escapeHtml(df.path)}</span>` +
+      `<span class="fs"><span class="badge-a">+${df.adds}</span> <span class="badge-d">−${df.dels}</span></span>`;
+    row.onclick = () => {
+      const id = pathToId.get(df.path);
+      if (id != null) openViewer(id, null, {tab:"diff"});
+      else openDiffOnly(df.path);
+    };
+    body.appendChild(row);
+  }
+}
+$("revClear").onclick = () => {
+  diffData = null; matchedFiles = null;
+  if (colorMode === "diff"){ colorMode = "lang"; $("colorSel").value = "lang"; }
+  $("colorSel").querySelector('[value="diff"]').disabled = true;
+  annotateOverlays(); renderReview(); drawMap(); drawGraph();
+  setStatus("Review cleared.");
+};
+$("revImpact").onchange = () => reviewApply();
+function renderDiffHtml(path){
+  const df = diffData && diffData.byPath.get(path);
+  if (!df) return '<div style="padding:14px;color:var(--dim)">no diff for this file</div>';
+  if (df.binary) return '<div style="padding:14px;color:var(--dim)">binary file changed</div>';
+  const what = df.status === "A" ? "added" : df.status === "D" ? "deleted" : df.status === "R" ? "renamed from " + escapeHtml(df.oldPath) : "modified";
+  const out = [`<div class="dsum">${what} · <span class="badge-a">+${df.adds}</span> <span class="badge-d">−${df.dels}</span></div>`];
+  for (const h of df.hunks){
+    out.push(`<div class="hunk">@@ −${h.oldStart} +${h.newStart} @@ ${escapeHtml(h.header || "")}</div>`);
+    let o = h.oldStart, n = h.newStart;
+    for (const [t, txt] of h.lines){
+      const esc = escapeHtml(txt) || " ";
+      if (t === "+") out.push(`<div class="ln dadd"><span class="no"></span><span class="no">${n++}</span><span class="ct">${esc}</span></div>`);
+      else if (t === "-") out.push(`<div class="ln ddel"><span class="no">${o++}</span><span class="no"></span><span class="ct">${esc}</span></div>`);
+      else out.push(`<div class="ln"><span class="no">${o++}</span><span class="no">${n++}</span><span class="ct">${esc}</span></div>`);
+    }
+  }
+  return out.join("");
+}
+function openDiffOnly(path){
+  const df = diffData && diffData.byPath.get(path);
+  if (!df) return;
+  viewerFileId = null;
+  $("vTitle").textContent = path;
+  $("vMeta").textContent = df.status === "D" ? "deleted in this diff" : "new in this diff";
+  $("vDeps").style.display = "none";
+  $("vTabs").style.display = "none";
+  $("viewer").classList.add("open");
+  $("vBody").innerHTML = renderDiffHtml(path);
+  $("vBody").scrollTop = 0;
+}
+$("vTabDiff").onclick = () => { if (viewerFileId != null) openViewer(viewerFileId, null, {tab:"diff"}); };
+$("vTabFile").onclick = () => { if (viewerFileId != null) openViewer(viewerFileId, null, {tab:"file"}); };
+$("colorSel").onchange = e => { colorMode = e.target.value; drawMap(); };
+/* ---- modal, PR fetch, paste ---- */
+$("gitBtn").onclick = () => {
+  if (gh && !$("prInput").value) $("prInput").value = `${gh.owner}/${gh.repo}#`;
+  $("gitModal").style.display = "flex";
+};
+$("gitCancel").onclick = () => $("gitModal").style.display = "none";
+$("gitModal").addEventListener("mousedown", e => { if (e.target === $("gitModal")) $("gitModal").style.display = "none"; });
+$("gitLoad").onclick = () => {
+  if (ingestGitText($("gitText").value)){ $("gitModal").style.display = "none"; $("gitText").value = ""; }
+  else setStatus("Couldn't recognize that as git log --numstat or git diff output.", true);
+};
+document.querySelectorAll("#gitModal [data-copy]").forEach(b => {
+  b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.getAttribute("data-copy")); b.textContent = "copied!"; }
+    catch { b.textContent = "select & copy"; }
+    setTimeout(() => { b.textContent = "copy"; }, 1500);
+  };
+});
+function parsePR(str){
+  str = (str || "").trim();
+  let m = str.match(/github\.com\/([^\/]+)\/([^\/]+)\/pull\/(\d+)/);
+  if (m) return {owner:m[1], repo:m[2], num:+m[3]};
+  m = str.match(/^([\w.-]+)\/([\w.-]+)#(\d+)$/);
+  if (m) return {owner:m[1], repo:m[2], num:+m[3]};
+  m = str.match(/^([\w.-]+)\/([\w.-]+)#?$/);
+  if (m) return {owner:m[1], repo:m[2], num:null};
+  return null;
+}
+async function fetchPRDiff(pr){
+  const token = $("tokenInput").value.trim();
+  try {
+    setStatus(`Fetching PR #${pr.num} of ${pr.owner}/${pr.repo}…`);
+    const headers = {Accept:"application/vnd.github.v3.diff"};
+    if (token) headers.Authorization = "Bearer " + token;
+    const res = await fetch(`https://api.github.com/repos/${pr.owner}/${pr.repo}/pulls/${pr.num}`, {headers});
+    if (!res.ok) throw new Error("GitHub API " + res.status);
+    applyDiff(parseDiff(await res.text()));
+    $("gitModal").style.display = "none";
+  } catch (err){ setStatus("PR fetch failed: " + err.message, true); }
+}
+$("prFetch").onclick = () => {
+  const pr = parsePR($("prInput").value);
+  if (!pr || !pr.num){ setStatus("Enter a PR like owner/repo#123 or a GitHub PR URL.", true); return; }
+  fetchPRDiff(pr);
+};
+$("prList").onclick = async () => {
+  const pr = parsePR($("prInput").value) || (gh ? {owner:gh.owner, repo:gh.repo} : null);
+  if (!pr){ setStatus("Enter a repo first (e.g. vllm-project/vllm).", true); return; }
+  try {
+    const rows = await ghFetch(`https://api.github.com/repos/${pr.owner}/${pr.repo}/pulls?state=closed&sort=updated&direction=desc&per_page=30`, $("tokenInput").value.trim());
+    const merged = rows.filter(r => r.merged_at).slice(0, 12);
+    const el = $("prRows");
+    el.innerHTML = merged.length ? "" : '<div class="mrow">no recently merged PRs found</div>';
+    for (const r of merged){
+      const row = document.createElement("div"); row.className = "fileRow";
+      row.title = "Click to load this PR's diff into review mode";
+      row.innerHTML = `<span class="fp">#${r.number} ${escapeHtml(r.title)}</span><span class="fs">${escapeHtml(r.user && r.user.login || "?")} · ${r.merged_at.slice(0, 10)}</span>`;
+      row.onclick = () => fetchPRDiff({owner:pr.owner, repo:pr.repo, num:r.number});
+      el.appendChild(row);
+    }
+  } catch (err){ setStatus("PR list failed: " + err.message, true); }
+};
+addEventListener("paste", e => {
+  const tag = (e.target.tagName || "").toUpperCase();
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  const text = e.clipboardData && e.clipboardData.getData("text");
+  if (text && ingestGitText(text)) e.preventDefault();
 });
 
 /* ================= misc ================= */
@@ -2442,6 +2907,98 @@ Deployment reads configs/deploy.yml (see Dockerfile).
 async function loadDemo(){ await loadMemoryEntries(SAMPLE, "sample-project"); }
 $("demoBtn").onclick = loadDemo;
 
+function sampleLogText(){
+  const now = Date.now();
+  const iso = d => new Date(now - d * 864e5).toISOString().slice(0, 10);
+  const hash = () => Array.from({length: 40}, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
+  const C = [
+    [1, "Rajath Pai", "Add metrics logging to training loop", [[9,2,"mlproj/train.py"],[9,0,"mlproj/utils/metrics.py"],[2,1,"configs/train.yml"]]],
+    [3, "Alex Kim", "Merge pull request #42 from alex/attention-fix", [[6,6,"mlproj/models/transformer.py"],[3,1,"tests/test_models.py"]]],
+    [5, "Rajath Pai", "Bump epochs and tune lr", [[2,2,"configs/train.yml"],[1,1,"configs/base.yml"]]],
+    [8, "Sam Chen", "Dashboard polling and error states", [[18,4,"web/dashboard/app.js"],[6,0,"web/dashboard/api.js"]]],
+    [11, "Rajath Pai", "Refactor registry to lazy loading", [[14,9,"mlproj/models/registry.py"],[4,2,"mlproj/train.py"],[3,1,"mlproj/eval.py"]]],
+    [14, "Alex Kim", "Fix checkpoint path on windows", [[3,3,"mlproj/utils/io.py"],[1,1,"mlproj/train.py"]]],
+    [18, "Rajath Pai", "Merge pull request #39 from rajath/eval-metrics", [[11,3,"mlproj/eval.py"],[4,0,"tests/test_train.py"]]],
+    [22, "Sam Chen", "Add deploy config for staging", [[12,0,"configs/deploy.yml"],[2,1,"Dockerfile"]]],
+    [26, "Rajath Pai", "Speed up data loader", [[8,5,"mlproj/data/loader.py"],[2,2,"mlproj/train.py"]]],
+    [31, "Alex Kim", "Transformer depth configurable", [[7,2,"mlproj/models/transformer.py"],[3,1,"mlproj/models/registry.py"],[2,0,"configs/base.yml"]]],
+    [36, "Rajath Pai", "CI: add smoke train step", [[9,1,"configs/ci.yml"],[2,1,"scripts/run_train.sh"]]],
+    [42, "Sam Chen", "Merge pull request #31 from sam/dashboard", [[40,0,"web/dashboard/app.js"],[12,0,"web/dashboard/index.html"],[8,0,"web/dashboard/style.css"]]],
+    [49, "Rajath Pai", "Augmentations: add jitter", [[6,1,"mlproj/data/augment.py"],[2,1,"mlproj/data/loader.py"]]],
+    [57, "Alex Kim", "Registry error messages", [[4,2,"mlproj/models/registry.py"],[2,0,"tests/test_models.py"]]],
+    [66, "Rajath Pai", "Train loop: gradient clipping", [[5,1,"mlproj/train.py"],[1,0,"configs/train.yml"]]],
+    [76, "Sam Chen", "Docs: architecture overview", [[24,0,"docs/architecture.md"],[3,1,"README.md"]]],
+    [88, "Rajath Pai", "ONNX export script", [[19,0,"scripts/export_onnx.py"],[1,0,"requirements.txt"]]],
+    [100, "Alex Kim", "Initial training pipeline", [[38,0,"mlproj/train.py"],[22,0,"mlproj/models/resnet.py"],[15,0,"mlproj/config.py"],[9,0,"configs/base.yml"]]],
+  ];
+  return C.map(([days, author, subject, fs]) =>
+    `commit ${hash()}\nAuthor: ${author} <${author.split(" ")[0].toLowerCase()}@example.com>\nDate:   ${iso(days)}\n\n    ${subject}\n\n` +
+    fs.map(f => `${f[0]}\t${f[1]}\t${f[2]}`).join("\n") + "\n"
+  ).join("\n");
+}
+const SAMPLE_DIFF = `diff --git a/mlproj/train.py b/mlproj/train.py
+index 1111111..2222222 100644
+--- a/mlproj/train.py
++++ b/mlproj/train.py
+@@ -1,10 +1,12 @@
+ import torch
+
+ from mlproj.config import load_config
+ from mlproj.data.loader import build_loader
+ from mlproj.models.registry import create_model
+ from mlproj.utils.logging import get_logger
+ from mlproj.utils.io import save_checkpoint
++from mlproj.utils.metrics import accuracy
+
+ log = get_logger(__name__)
++BEST = float("-inf")
+
+@@ -24,7 +26,9 @@ def train(cfg):
+     for epoch in range(cfg["epochs"]):
+         loss = train_one_epoch(model, loader, opt)
+-        log.info("epoch %d loss %.4f", epoch, loss)
++        acc = accuracy(model, loader)
++        log.info("epoch %d loss %.4f acc %.3f", epoch, loss, acc)
+         save_checkpoint(model, cfg["checkpoint_dir"], epoch)
++        log.info("best %.3f", max(BEST, acc))
+diff --git a/mlproj/utils/metrics.py b/mlproj/utils/metrics.py
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/mlproj/utils/metrics.py
+@@ -0,0 +1,9 @@
++import torch
++
++def accuracy(model, loader):
++    correct = seen = 0
++    for x, y in loader:
++        pred = model(x).argmax(-1)
++        correct += int((pred == y).sum())
++        seen += len(y)
++    return correct / max(seen, 1)
+diff --git a/configs/train.yml b/configs/train.yml
+index 4444444..5555555 100644
+--- a/configs/train.yml
++++ b/configs/train.yml
+@@ -1,7 +1,8 @@
+ include: configs/base.yml
+-epochs: 20
++epochs: 30
+ batch_size: 128
++log_metrics: true
+ data:
+   train_csv: tests/data/tiny.csv
+   num_workers: 4
+diff --git a/web/dashboard/style.css b/web/dashboard/style.css
+deleted file mode 100644
+index 6666666..0000000
+--- a/web/dashboard/style.css
++++ /dev/null
+@@ -1,2 +0,0 @@
+-body { font-family: system-ui; margin: 2rem; }
+-#chart { border: 1px solid #ccc; padding: 1rem; white-space: pre; }
+`;
+
 /* hash links: #demo / #demo-graph / #demo-viewer / #demo-grep / #gh=owner/repo */
 async function handleHash(){
   const h = decodeURIComponent(location.hash || "");
@@ -2463,6 +3020,11 @@ async function handleHash(){
     $("searchMode").value = "content";
     $("searchInput").value = "create_model";
     runContentSearch();
+  } else if (mode === "hotspots"){
+    ingestGitText(sampleLogText());
+  } else if (mode === "review"){
+    ingestGitText(SAMPLE_DIFF);
+    openViewer(pathToId.get("mlproj/train.py"));
   }
 }
 handleHash();

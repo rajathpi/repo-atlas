@@ -31,6 +31,22 @@ Built from a real index of your code: **imports** (Python — including `from . 
 
 Click any file anywhere and read it. The panel on top doesn't just list dependencies — it shows **the exact line where each reference happens**, as a clickable snippet. "Depends on" rows jump to the referencing line in this file; "used by" rows open the other file at the line that references this one.
 
+### Hotspots — "Code as a Crime Scene"
+
+![Hotspot heat map](shots/hotspots.png)
+
+Feed it your git history (`Git…` button has the command — or just drop the output file on the page) and the treemap recolors by **churn**: hot red = changed frequently and recently, dark = untouched. Hot files that are also dependency hubs are where the bugs and the tribal knowledge live. The sidebar adds a ranked **Hotspots** list (with each file's main author) and a **History** feed — recent commits with author and date; click one to light up exactly the files it touched.
+
+### PR / diff review mode
+
+![Review mode](shots/review.png)
+
+Reviewing changes without context is the worst part of reviewing. Load a diff — `git diff main` for a local branch (including what an AI assistant just edited), a `.diff` file, or **fetch any GitHub PR by number** (there's also a "Merged PRs…" browser) — and:
+
+- Changed files light up **on the treemap**, so you see where each change lives and what surrounds it
+- The **Review list** shows every file with `A/M/D/R` status and +/− counts; click to read the diff, with a **Full file** tab one click away
+- The dependency panel still works on changed files, and one checkbox extends the highlight to **direct dependents** — the change's blast radius
+
 ### Instant grep
 
 ![Content search](shots/grep.png)
@@ -46,7 +62,14 @@ Once indexed, searching every file's contents is instant: `file:line` hits with 
    - **Load a GitHub repo** by name (`owner/repo`, URL, or `owner/repo@branch`) — structure and treemap only, since the API doesn't provide file contents
    - Hit **▶ Load demo project** to play with a bundled sample
 
-Shareable links work too: `repo-atlas.html#gh=vllm-project/vllm` auto-loads a GitHub repo, `#demo` loads the sample.
+Shareable links work too: `repo-atlas.html#gh=vllm-project/vllm` auto-loads a GitHub repo, `#demo` loads the sample (`#demo-graph`, `#demo-hotspots`, `#demo-review`, `#demo-grep` jump straight to each view).
+
+For git features, run either command in your repo and drop the output file on the page (or paste it — the format is auto-detected):
+
+```
+git log --numstat --date=short --no-color -n 5000 > gitlog.txt   # hotspots + history
+git diff main --no-color > changes.diff                          # review mode
+```
 
 ## Controls
 
