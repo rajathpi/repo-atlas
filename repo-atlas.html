@@ -386,7 +386,8 @@ let rootName = "", source = null, gh = null;  // gh = {owner,repo,branch}
 let tree = null, currentRoot = null;
 let hoverNode = null, flashNode = null, flashUntil = 0;
 let searchTerm = "";       // name-mode live filter
-let matchedFiles = null;   // Set of ids matched by content grep (used for dimming)
+let matchedFiles = null;   // Set of ids driving treemap/graph dimming
+let matchOwner = null;     // which feature set matchedFiles: "search" | "commit" | "review"
 let activeView = "map";
 let viewerFileId = null;
 
@@ -444,7 +445,7 @@ function setDataset(entries, name, src, ghInfo, skipExcludes, keepOverlays){
   const ex = skipExcludes ? new Set() : new Set(excludeList());
   files = []; pathToId = new Map(); byBase = new Map(); dirSet = new Set();
   contents = []; edgesOut = []; edgesIn = []; edgeEvidence = new Map(); indexed = false;
-  matchedFiles = null; graph.sel = null;
+  matchedFiles = null; matchOwner = null; graph.sel = null;
   rootName = name; source = src; gh = ghInfo || null;
   for (const e of entries){
     const parts = e.path.split("/");
@@ -1501,6 +1502,22 @@ function flashLine(line){
 $("vClose").onclick = () => { $("viewer").classList.remove("open"); viewerFileId = null; };
 $("vGraph").onclick = () => { if (viewerFileId != null){ $("viewer").classList.remove("open"); egoGraph(viewerFileId); } };
 
+/* ================= highlight ownership ================= */
+// content search, commit highlight, and diff review all dim the treemap/graph via
+// matchedFiles; each transfer of ownership tears down the previous owner's UI state
+// so a stale panel never claims a highlight that is no longer on screen
+function takeMatched(set, owner){
+  if (matchOwner === "search" && owner !== "search") $("secResults").style.display = "none";
+  if (matchOwner === "commit" && owner !== "commit" && highlightedCommit){ highlightedCommit = null; renderHistory(); }
+  matchedFiles = set; matchOwner = set ? owner : null;
+}
+function releaseMatched(owner){
+  if (matchOwner !== owner) return;
+  matchedFiles = null; matchOwner = null;
+  // review's highlight persists while a diff is loaded — restore it when another owner lets go
+  if (diffData && owner !== "review") reviewApply();
+}
+
 /* ================= search ================= */
 function runContentSearch(){
   const term = $("searchInput").value.trim();
@@ -1527,7 +1544,7 @@ function runContentSearch(){
     }
     if (perFile) fileSet.add(id);
   }
-  matchedFiles = fileSet;
+  takeMatched(fileSet, "search");
   $("secResults").style.display = "";
   $("resTitle").textContent = `"${term}" — ${hits.length}${hits.length >= 400 ? "+" : ""} hits in ${fileSet.size} files`;
   const body = $("resBody"); body.innerHTML = "";
@@ -1542,8 +1559,8 @@ function runContentSearch(){
   invalidateMapCache(); drawMap(); drawGraph();
 }
 function clearContentSearch(){
-  matchedFiles = null;
   $("secResults").style.display = "none";
+  releaseMatched("search");
   invalidateMapCache(); drawMap(); drawGraph();
 }
 $("resClose").onclick = () => { clearContentSearch(); };
@@ -1551,7 +1568,8 @@ $("selClose").onclick = () => { graph.sel = null; $("secSel").style.display = "n
 $("searchInput").addEventListener("input", e => {
   if ($("searchMode").value === "names"){
     searchTerm = e.target.value.trim().toLowerCase();
-    matchedFiles = null;
+    $("secResults").style.display = "none";
+    releaseMatched("search");
     invalidateMapCache(); drawMap(); drawGraph();
   }
 });
@@ -2351,12 +2369,12 @@ function renderHistory(){
 }
 function toggleCommitHighlight(c){
   if (highlightedCommit === c){
-    highlightedCommit = null; matchedFiles = null;
+    highlightedCommit = null; releaseMatched("commit");
     setStatus("Commit highlight cleared.");
   } else {
     const set = new Set();
     for (const p of c.files){ const id = pathToId.get(p); if (id != null) set.add(id); }
-    matchedFiles = set; highlightedCommit = c;
+    takeMatched(set, "commit"); highlightedCommit = c;
     setStatus(`"${c.subject || c.hash.slice(0, 10)}" — ${c.author || "?"} · highlighting ${set.size} touched file${set.size === 1 ? "" : "s"}.`);
   }
   renderHistory();
@@ -2366,7 +2384,7 @@ $("histClear").onclick = () => {
   gitCommits = []; churnMap = new Map(); highlightedCommit = null;
   if (colorMode === "churn"){ colorMode = "lang"; $("colorSel").value = "lang"; }
   $("colorSel").querySelector('[value="churn"]').disabled = true;
-  if (!diffData) matchedFiles = null;
+  releaseMatched("commit");
   annotateOverlays(); renderHotspots(); renderHistory();
   invalidateMapCache(); drawMap(); drawGraph();
   setStatus("Git history cleared.");
@@ -2394,7 +2412,7 @@ function reviewApply(){
   if ($("revImpact").checked && indexed){
     for (const id of changed) for (const from of edgesIn[id].keys()) show.add(from);
   }
-  matchedFiles = show; highlightedCommit = null;
+  takeMatched(show, "review");
   invalidateMapCache(); drawMap(); drawGraph();
 }
 function renderReview(){
@@ -2419,7 +2437,7 @@ function renderReview(){
   }
 }
 $("revClear").onclick = () => {
-  diffData = null; matchedFiles = null;
+  diffData = null; releaseMatched("review");
   if (colorMode === "diff"){ colorMode = "lang"; $("colorSel").value = "lang"; }
   $("colorSel").querySelector('[value="diff"]').disabled = true;
   annotateOverlays(); renderReview();
