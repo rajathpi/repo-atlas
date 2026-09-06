@@ -309,6 +309,7 @@
       <button id="prList" title="List recently merged PRs of that repo">Merged PRs…</button>
     </div>
     <div id="prRows"></div>
+    <div id="gitErr" class="mrow" style="display:none; color:var(--danger)"></div>
     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
       <button id="gitCancel">Close</button>
       <button id="gitLoad" class="primary">Load pasted text</button>
@@ -2366,17 +2367,26 @@ function ingestGitText(text){
   const commitCount = (text.match(/^commit [0-9a-f]{7,40}/gm) || []).length;
   const hasDiff = /^diff --git /m.test(text);
   const hasNumstat = /^(\d+|-)\t(\d+|-)\t.+/m.test(text);
-  if (hasDiff && commitCount < 2){ applyDiff(parseDiff(text)); return true; }
+  // returns true (loaded), false (not git output at all), or the error message string
+  // when the text was recognized but nothing usable could be loaded — callers keep the
+  // dialog open and the pasted text intact in that last case
+  if (hasDiff && commitCount < 2){
+    const d = parseDiff(text);
+    if (!d.files.length) return ingestReject("That looked like a diff, but no file changes were found in it.");
+    applyDiff(d); return true;
+  }
   if (commitCount >= 1 || hasNumstat){
-    if (!hasNumstat){
-      setStatus(hasDiff ? "That looks like git log -p — use git log --numstat instead." : "git log loaded but without file stats — add --numstat.", true);
-      return true;
-    }
-    applyLog(parseLog(text));
+    if (!hasNumstat)
+      return ingestReject(hasDiff ? "That looks like git log -p — use git log --numstat instead." : "git log loaded but without file stats — add --numstat.");
+    const commits = parseLog(text);
+    if (!commits.length) return ingestReject("No commits could be parsed out of that git log output.");
+    applyLog(commits);
     return true;
   }
   return false;
 }
+function ingestReject(msg){ setStatus(msg, true); return msg; }
+function showGitErr(msg){ const el = $("gitErr"); el.textContent = msg; el.style.display = ""; setStatus(msg, true); }
 /* ---- apply: history / hotspots ---- */
 function resolveLogPath(p){
   // git log paths are repo-root-relative; the loaded folder may be the repo, a
@@ -2596,11 +2606,12 @@ $("colorSel").onchange = e => { colorMode = e.target.value; invalidateMapCache()
 $("clipBtn").onclick = async () => {
   try {
     const text = await navigator.clipboard.readText();
-    if (!text || !text.trim()){ setStatus("Clipboard is empty — run one of the commands first.", true); return; }
-    if (ingestGitText(text)) $("gitModal").style.display = "none";
-    else setStatus("Clipboard didn't look like git log --numstat or git diff output.", true);
+    if (!text || !text.trim()){ showGitErr("Clipboard is empty — run one of the commands first."); return; }
+    const r = ingestGitText(text);
+    if (r === true){ $("gitModal").style.display = "none"; $("gitErr").style.display = "none"; }
+    else showGitErr(r === false ? "Clipboard didn't look like git log --numstat or git diff output." : r);
   } catch (err){
-    setStatus("Couldn't read the clipboard (" + err.message + ") — paste into the box instead.", true);
+    showGitErr("Couldn't read the clipboard (" + err.message + ") — paste into the box instead.");
   }
 };
 let originRepo = null;
@@ -2653,6 +2664,7 @@ async function fetchOriginHistory(){
 }
 $("gitBtn").onclick = async () => {
   if (gh && !$("prInput").value) $("prInput").value = `${gh.owner}/${gh.repo}#`;
+  $("gitErr").style.display = "none";
   $("gitModal").style.display = "flex";
   await detectOrigin();
   const row = $("originRow");
@@ -2670,8 +2682,9 @@ $("gitBtn").onclick = async () => {
 $("gitCancel").onclick = () => $("gitModal").style.display = "none";
 $("gitModal").addEventListener("mousedown", e => { if (e.target === $("gitModal")) $("gitModal").style.display = "none"; });
 $("gitLoad").onclick = () => {
-  if (ingestGitText($("gitText").value)){ $("gitModal").style.display = "none"; $("gitText").value = ""; }
-  else setStatus("Couldn't recognize that as git log --numstat or git diff output.", true);
+  const r = ingestGitText($("gitText").value);
+  if (r === true){ $("gitModal").style.display = "none"; $("gitText").value = ""; $("gitErr").style.display = "none"; }
+  else showGitErr(r === false ? "Couldn't recognize that as git log --numstat or git diff output." : r);
 };
 let clipWatch = null;
 function disarmClipWatch(){
@@ -2680,15 +2693,21 @@ function disarmClipWatch(){
 function armClipWatch(copiedCmd){
   disarmClipWatch();
   const until = Date.now() + 180000;
+  let lastRejected = null; // don't re-parse (or re-flash errors for) the same clipboard text every tick
   const tryRead = async () => {
     if (!clipWatch) return;
     if (Date.now() > until){ disarmClipWatch(); return; }
     if (!document.hasFocus()) return;
     try {
       const t = await navigator.clipboard.readText();
-      if (t && t.trim() && t.trim() !== copiedCmd.trim() && ingestGitText(t)){
+      if (!t || !t.trim() || t.trim() === copiedCmd.trim() || t === lastRejected) return;
+      const r = ingestGitText(t);
+      if (r === true){
         disarmClipWatch();
-        $("gitModal").style.display = "none";
+        $("gitModal").style.display = "none"; $("gitErr").style.display = "none";
+      } else {
+        lastRejected = t; // keep watching — the corrected command's output will differ
+        if (typeof r === "string") showGitErr(r);
       }
     } catch {}
   };
