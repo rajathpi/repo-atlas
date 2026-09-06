@@ -2093,7 +2093,8 @@ async function applyExcludes(){
       rawEntries = out;
       if (!setDataset(out, rootHandle.name, "local", null, false, true)) return;
       files.forEach((f, id) => { const c = oldContents.get(f.path); if (c != null) contents[id] = c; });
-      buildIndex();
+      await buildIndex();
+      refreshOverlayPanels();
       return;
     } catch {} // folder permission lapsed — fall back to the last scan
   }
@@ -2103,8 +2104,18 @@ async function applyExcludes(){
     const c = oldContents.get(f.path);
     if (c != null) contents[id] = c;
   });
-  if (src === "local" || src === "cache") buildIndex();
+  if (src === "local" || src === "cache") await buildIndex();
   else setStatus(`Excludes applied — ${fmtInt(files.length)} files, ${humanSize(tree.size)}.`);
+  refreshOverlayPanels();
+}
+function refreshOverlayPanels(){
+  // Hotspots/Review rows are built against pathToId, so a re-filter must rebuild them
+  // or they keep dead rows (and dead click handlers) for now-excluded files
+  if (churnMap.size || gitCommits.length){ renderHotspots(); renderHistory(); }
+  if (diffData) renderReview();
+  // setDataset dropped the highlight set — restore whichever feature was driving it
+  if (highlightedCommit){ const c = highlightedCommit; highlightedCommit = null; toggleCommitHighlight(c); }
+  else if (diffData) reviewApply();
 }
 $("applyBtn").onclick = applyExcludes;
 $("excludeInput").addEventListener("keydown", e => { if (e.key === "Enter") applyExcludes(); });
@@ -2419,11 +2430,17 @@ function renderReview(){
   const sec = $("secReview");
   if (!diffData){ sec.style.display = "none"; return; }
   sec.style.display = "";
-  const adds = diffData.files.reduce((s, f) => s + f.adds, 0), dels = diffData.files.reduce((s, f) => s + f.dels, 0);
-  $("revSummary").innerHTML = `<b>${diffData.files.length}</b> files · <span class="badge-a">+${fmtInt(adds)}</span> <span class="badge-d">−${fmtInt(dels)}</span>`;
+  // rows for files hidden by the exclude list are dropped; files merely absent from the
+  // loaded folder (deletions, unapplied renames) stay listed and open the diff-only view
+  const ex = new Set(excludeList());
+  const listed = files.length ? diffData.files.filter(df => !df.path.split("/").some(p => ex.has(p))) : diffData.files;
+  const hidden = diffData.files.length - listed.length;
+  const adds = listed.reduce((s, f) => s + f.adds, 0), dels = listed.reduce((s, f) => s + f.dels, 0);
+  $("revSummary").innerHTML = `<b>${listed.length}</b> files · <span class="badge-a">+${fmtInt(adds)}</span> <span class="badge-d">−${fmtInt(dels)}</span>` +
+    (hidden ? ` <span style="color:var(--dim)">· ${hidden} excluded</span>` : "");
   $("revImpact").disabled = !indexed;
   const body = $("revBody"); body.innerHTML = "";
-  for (const df of diffData.files){
+  for (const df of listed){
     const row = document.createElement("div"); row.className = "fileRow";
     const cls = df.status === "A" ? "badge-a" : df.status === "D" ? "badge-d" : df.status === "R" ? "badge-r" : "badge-m";
     row.innerHTML = `<span class="${cls}" style="flex:0 0 12px">${df.status}</span><span class="fp">${escapeHtml(df.path)}</span>` +
