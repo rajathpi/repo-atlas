@@ -940,10 +940,15 @@ function jsImports(text, f, id, starts){
     const spec = m[1] || m[2] || m[3] || m[4];
     if (!spec || (!spec.startsWith("./") && !spec.startsWith("../"))) continue;
     const base = normPath(dirOf(f.path) + "/" + spec);
+    // a file named after the specifier wins over a directory's index file, matching
+    // Node/bundler resolution — try every real extension before any <base>/index.*
     let target = null;
     for (const e of JS_RESOLVE_EXTS){
       target = pathToId.get(base + e); if (target != null) break;
-      target = pathToId.get(base + "/index" + (e || ".js")); if (target != null) break;
+    }
+    if (target == null) for (const e of JS_RESOLVE_EXTS){
+      if (!e) continue;
+      target = pathToId.get(base + "/index" + e); if (target != null) break;
     }
     if (target != null) addEdge(id, target, "imp", lineAt(starts(), m.index));
   }
