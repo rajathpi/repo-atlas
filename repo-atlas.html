@@ -1794,9 +1794,22 @@ function idb(){
     req.onerror = () => rej(req.error);
   });
 }
+// FNV-1a over the sorted path list: two different codebases whose folders happen to
+// share a name (src, app, two clones of unrelated projects...) must not collide in the
+// cache — keying by rootName alone silently overwrote one with the other
+function datasetSig(){
+  const paths = files.map(f => f.path).sort();
+  let h = 0x811c9dc5;
+  for (const p of paths){
+    for (let i = 0; i < p.length; i++){ h ^= p.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    h ^= 10; h = Math.imul(h, 0x01000193) >>> 0; // path separator
+  }
+  return h.toString(36);
+}
 async function saveCache(){
   if (source !== "local" || !indexed) return;
   const db = await idb();
+  const cacheKey = rootName + "\u0002" + datasetSig();
   const edges = [];
   edgesOut.forEach((m, from) => { for (const [to, kind] of m) edges.push([from, to, kind === "imp" ? 1 : 0, edgeEvidence.get(from + "|" + to) || []]); });
   // Contents are cached only for repos small enough that persisting them is cheaper
@@ -1822,16 +1835,16 @@ async function saveCache(){
   await new Promise((res, rej) => {
     const tx = db.transaction(["meta","data"], "readwrite");
     tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("cache write aborted"));
-    tx.objectStore("meta").put({key:rootName, builtAt, nFiles:files.length, nEdges:edges.length, withText});
+    tx.objectStore("meta").put({key:cacheKey, name:rootName, builtAt, nFiles:files.length, nEdges:edges.length, withText});
     const data = tx.objectStore("data");
-    data.delete(IDBKeyRange.bound(rootName + "\u0001", rootName + "\u0001\uffff"));
-    data.put({key: rootName, builtAt, withText, files: files.map(f => ({p:f.path, s:f.size})), nChunks: chunks.length});
+    data.delete(IDBKeyRange.bound(cacheKey + "\u0001", cacheKey + "\u0001\uffff"));
+    data.put({key: cacheKey, name: rootName, builtAt, withText, files: files.map(f => ({p:f.path, s:f.size})), nChunks: chunks.length});
     let i = 0;
     // chained puts: each clone runs in its own task so the page keeps painting
     const putNext = () => {
       if (i >= chunks.length) return;
       const c = chunks[i];
-      const req = data.put({key: rootName + "\u0001" + i, contents: c.contents, edges: c.edges});
+      const req = data.put({key: cacheKey + "\u0001" + i, contents: c.contents, edges: c.edges});
       i++;
       req.onsuccess = putNext;
     };
@@ -1859,8 +1872,9 @@ async function loadCache(key){
   });
   if (!payload){ setStatus("Cache entry not found.", true); return; }
   const entries = payload.files.map(f => ({path:f.p, size:f.s}));
+  const name = payload.name || key; // pre-signature entries used the folder name as the key
   rawEntries = entries; rootHandle = null;
-  if (!setDataset(entries, key, "cache", null, true)) return;
+  if (!setDataset(entries, name, "cache", null, true)) return;
   // Chunks stream in over multiple await gaps; hold the indexing guard so no other
   // load can swap files/contents/edges underneath and get this cache's remaining
   // chunks (content + edges keyed by the old dataset's ids) written into its arrays.
@@ -1895,7 +1909,7 @@ async function loadCache(key){
   }
   } finally { indexing = false; setProgress(null); }
   indexed = true;
-  setStatus(`${key} — loaded from cache: ${fmtInt(files.length)} files, ${fmtInt(edgeCount())} dependency links (built ${new Date(payload.builtAt).toLocaleDateString()})` +
+  setStatus(`${name} — loaded from cache: ${fmtInt(files.length)} files, ${fmtInt(edgeCount())} dependency links (built ${new Date(payload.builtAt).toLocaleDateString()})` +
     (payload.withText === false ? " · treemap and graph only — re-open the folder to grep or read files" : ""));
   renderOverview(); renderHubs(); updateGraphEmpty();
   graph.built = false;
@@ -1918,17 +1932,18 @@ async function refreshCacheList(){
   sel.innerHTML = '<option value="">cached indexes…</option>';
   const chips = $("cacheChips"); chips.innerHTML = "";
   for (const m of metas.sort((a,b) => b.builtAt - a.builtAt)){
+    const nm = m.name || m.key; // pre-signature entries used the folder name as the key
     const o = document.createElement("option");
     o.value = m.key;
-    o.textContent = `${m.key} (${fmtInt(m.nFiles)} files, ${new Date(m.builtAt).toLocaleDateString()})`;
+    o.textContent = `${nm} (${fmtInt(m.nFiles)} files, ${new Date(m.builtAt).toLocaleDateString()})`;
     sel.appendChild(o);
     const b = document.createElement("button");
-    b.textContent = `⚡ ${m.key} — ${fmtInt(m.nFiles)} files`;
+    b.textContent = `⚡ ${nm} — ${fmtInt(m.nFiles)} files`;
     b.title = "Load cached index (instant, no folder needed)";
     b.onclick = () => loadCache(m.key);
     const d = document.createElement("button");
     d.textContent = "✕";
-    d.title = `Delete the cached index for ${m.key}`;
+    d.title = `Delete the cached index for ${nm}`;
     d.onclick = () => deleteCache(m.key);
     chips.appendChild(b); chips.appendChild(d);
   }
