@@ -2086,6 +2086,22 @@ async function applyExcludes(){
   // keep already-read contents so local folders don't need re-reading
   const oldContents = new Map();
   files.forEach((f, id) => { if (contents[id] != null) oldContents.set(f.path, contents[id]); });
+  // ...and the known edges (keyed by path): setDataset allocates fresh edge arrays, and
+  // buildIndex can only recompute edges for files whose text is in memory or re-readable —
+  // a structure-only cache has neither, so without this its whole graph would vanish
+  const oldEdges = [];
+  files.forEach((f, id) => {
+    for (const [to, kind] of edgesOut[id])
+      oldEdges.push([f.path, files[to].path, kind, edgeEvidence.get(id + "|" + to)]);
+  });
+  const restoreEdges = () => {
+    for (const [fp, tp, kind, ev] of oldEdges){
+      const from = pathToId.get(fp), to = pathToId.get(tp);
+      if (from == null || to == null) continue;
+      edgesOut[from].set(to, kind); edgesIn[to].set(from, kind);
+      if (ev && ev.length) edgeEvidence.set(from + "|" + to, ev);
+    }
+  };
   if (rootHandle){
     // re-scan the picked folder so loosening the list brings skipped dirs back
     scanNote = 0;
@@ -2095,6 +2111,7 @@ async function applyExcludes(){
       rawEntries = out;
       if (!setDataset(out, rootHandle.name, "local", null, false, true)) return;
       files.forEach((f, id) => { const c = oldContents.get(f.path); if (c != null) contents[id] = c; });
+      restoreEdges();
       await buildIndex();
       refreshOverlayPanels();
       return;
@@ -2106,6 +2123,7 @@ async function applyExcludes(){
     const c = oldContents.get(f.path);
     if (c != null) contents[id] = c;
   });
+  restoreEdges();
   if (src === "local" || src === "cache") await buildIndex();
   else setStatus(`Excludes applied — ${fmtInt(files.length)} files, ${humanSize(tree.size)}.`);
   refreshOverlayPanels();
