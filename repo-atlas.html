@@ -1622,6 +1622,7 @@ function updateBadge(){
   if (!source){ el.style.display = "none"; return; }
   el.style.display = "";
   if (source === "github"){ el.className = "gh"; el.textContent = "GitHub · structure only"; el.title = "Loaded from the GitHub API — file names & sizes only, so no dependency graph. Open your local clone to index it."; }
+  else if (source === "diff"){ el.className = "gh"; el.textContent = "diff only"; el.title = "Built from a loaded diff — file sizes are estimated from change counts, and there are no file contents to index. Open the repo folder to explore the real codebase."; }
   else if (source === "cache"){ el.className = "loc"; el.textContent = "cached index"; el.title = "Loaded from this browser's cache — dependency graph, grep and code viewer all work."; }
   else { el.className = indexed ? "loc" : ""; el.textContent = indexed ? "local · indexed" : (indexing ? "local · indexing…" : "local"); el.title = "Local folder — nothing leaves your machine."; }
 }
@@ -1638,6 +1639,7 @@ function updateGraphEmpty(){
   if (noneInScope) msg = `<b>No dependency links between the items inside ${escapeHtml(graph.root)}/.</b><br>They may still be referenced from elsewhere — <b>⌂ Top level</b> shows the whole codebase.`;
   else if (indexing) msg = "<b>Indexing…</b><br>Dependency links will appear here when it finishes.";
   else if (source === "github") msg = "<b>No dependency data — this repo was loaded from GitHub, which gives structure only</b> (file names and sizes, no contents).<br><br>To get the dependency graph, clone the repo and open the folder with <b>“Open local folder…”</b> (or drop it on the page). It's indexed once on your machine — nothing is uploaded — then cached for instant reuse.";
+  else if (source === "diff") msg = "<b>This view was built from a diff only</b> — the changed files' names, but no contents, so there is nothing to index.<br>Open the repo folder with <b>“Open local folder…”</b> to get the dependency graph.";
   else if (indexed) msg = "<b>No dependency links detected in this folder.</b><br>The indexer looks for imports (Python / JS / C-style) and mentions of other files' paths or names.";
   else msg = "<b>Not indexed yet.</b> Open a local folder to build the dependency index.";
   el.innerHTML = `<div class="box">${msg}</div>`;
@@ -2406,7 +2408,9 @@ function applyDiff(d){
   diffData = d;
   if (!files.length){
     const entries = d.files.filter(f => f.status !== "D").map(f => ({path:f.path, size:(f.adds + f.dels + 1) * 40}));
-    if (entries.length){ rawEntries = entries; setDataset(entries, "diff-only view", "local", null, false, true); }
+    // "diff", not "local": these entries have no file handles and made-up sizes, so they
+    // must never be auto-indexed, saved to the cache, or badged as a real local folder
+    if (entries.length){ rawEntries = entries; setDataset(entries, "diff-only view", "diff", null, false, true); }
   }
   $("colorSel").querySelector('[value="diff"]').disabled = false;
   colorMode = "diff"; $("colorSel").value = "diff";
