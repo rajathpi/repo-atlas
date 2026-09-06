@@ -426,9 +426,21 @@ async function yieldIfDue(){
 function excludeList(){
   return $("excludeInput").value.split(",").map(s => s.trim()).filter(Boolean);
 }
-function setDataset(entries, name, src, ghInfo, skipExcludes){
+function clearGitState(){
+  // a new dataset must not inherit the previous one's git/diff overlays: colorMode
+  // stuck on churn/diff paints the fresh treemap flat gray, and the Review/Hotspots/
+  // History sections keep showing the old codebase's data
+  if (!diffData && !churnMap.size && !gitCommits.length && colorMode === "lang") return;
+  diffData = null; churnMap = new Map(); gitCommits = []; highlightedCommit = null;
+  colorMode = "lang"; $("colorSel").value = "lang";
+  $("colorSel").querySelector('[value="churn"]').disabled = true;
+  $("colorSel").querySelector('[value="diff"]').disabled = true;
+  renderHotspots(); renderHistory(); renderReview();
+}
+function setDataset(entries, name, src, ghInfo, skipExcludes, keepOverlays){
   // entries: [{path,size,file?}]
   if (indexing){ setStatus("Indexing is still running — wait for it to finish before loading something else.", true); return false; }
+  if (!keepOverlays) clearGitState();
   const ex = skipExcludes ? new Set() : new Set(excludeList());
   files = []; pathToId = new Map(); byBase = new Map(); dirSet = new Set();
   contents = []; edgesOut = []; edgesIn = []; edgeEvidence = new Map(); indexed = false;
@@ -2061,14 +2073,14 @@ async function applyExcludes(){
     try {
       const out = await walkDirHandle(rootHandle, new Set(excludeList()));
       rawEntries = out;
-      if (!setDataset(out, rootHandle.name, "local", null)) return;
+      if (!setDataset(out, rootHandle.name, "local", null, false, true)) return;
       files.forEach((f, id) => { const c = oldContents.get(f.path); if (c != null) contents[id] = c; });
       buildIndex();
       return;
     } catch {} // folder permission lapsed — fall back to the last scan
   }
   const src = source, g = gh, name = rootName;
-  if (!setDataset(rawEntries, name, src, g)) return;
+  if (!setDataset(rawEntries, name, src, g, false, true)) return;
   files.forEach((f, id) => {
     const c = oldContents.get(f.path);
     if (c != null) contents[id] = c;
@@ -2365,7 +2377,7 @@ function applyDiff(d){
   diffData = d;
   if (!files.length){
     const entries = d.files.filter(f => f.status !== "D").map(f => ({path:f.path, size:(f.adds + f.dels + 1) * 40}));
-    if (entries.length){ rawEntries = entries; setDataset(entries, "diff-only view", "local", null); }
+    if (entries.length){ rawEntries = entries; setDataset(entries, "diff-only view", "local", null, false, true); }
   }
   $("colorSel").querySelector('[value="diff"]').disabled = false;
   colorMode = "diff"; $("colorSel").value = "diff";
