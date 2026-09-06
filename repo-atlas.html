@@ -1850,6 +1850,7 @@ async function listCaches(){
   } catch { return []; }
 }
 async function loadCache(key){
+  if (indexing){ setStatus("Another load is still running — wait for it to finish first.", true); return; }
   const db = await idb();
   const payload = await new Promise((res, rej) => {
     const req = db.transaction("data").objectStore("data").get(key);
@@ -1860,6 +1861,12 @@ async function loadCache(key){
   const entries = payload.files.map(f => ({path:f.p, size:f.s}));
   rawEntries = entries; rootHandle = null;
   if (!setDataset(entries, key, "cache", null, true)) return;
+  // Chunks stream in over multiple await gaps; hold the indexing guard so no other
+  // load can swap files/contents/edges underneath and get this cache's remaining
+  // chunks (content + edges keyed by the old dataset's ids) written into its arrays.
+  indexing = true;
+  const myContents = contents; // belt & suspenders: bail if the dataset changed anyway
+  try {
   const applyEdges = list => {
     for (const [from, to, imp, ev] of list){
       if (from < files.length && to < files.length){
@@ -1876,16 +1883,17 @@ async function loadCache(key){
         req.onsuccess = () => res(req.result);
         req.onerror = () => rej(req.error);
       });
+      if (contents !== myContents) return; // dataset swapped underneath — stop writing
       if (!chunk) continue;
       for (const [id, t] of chunk.contents) if (id < contents.length) contents[id] = t;
       applyEdges(chunk.edges);
       setProgress((i+1)/payload.nChunks);
     }
-    setProgress(null);
   } else { // pre-chunking cache entry
     contents = payload.contents;
     applyEdges(payload.edges);
   }
+  } finally { indexing = false; setProgress(null); }
   indexed = true;
   setStatus(`${key} — loaded from cache: ${fmtInt(files.length)} files, ${fmtInt(edgeCount())} dependency links (built ${new Date(payload.builtAt).toLocaleDateString()})` +
     (payload.withText === false ? " · treemap and graph only — re-open the folder to grep or read files" : ""));
