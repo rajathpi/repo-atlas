@@ -1457,7 +1457,7 @@ async function openViewer(fileId, line, opts = {}){
       };
     });
   } else { depEl.style.display = "none"; }
-  const hasDiff = !!(diffData && diffData.byPath.has(f.path));
+  const hasDiff = !!diffFor(f.path);
   $("vTabs").style.display = hasDiff ? "" : "none";
   const wantDiff = hasDiff && opts.tab !== "file";
   $("vTabDiff").classList.toggle("active", wantDiff);
@@ -1760,7 +1760,7 @@ cvsMap.addEventListener("mousemove", e => {
     if (node.isFile){
       const ce = churnMap.get(node.path);
       if (ce) extra += `<br>changed ${ce.commits}× · last ${ce.last ? new Date(ce.last).toISOString().slice(0,10) : "?"} · mostly ${escapeHtml(topAuthorOf(ce))}`;
-      const df = diffData && diffData.byPath.get(node.path);
+      const df = diffFor(node.path);
       if (df) extra += `<br>in this diff: <span class="badge-a">+${df.adds}</span> <span class="badge-d">−${df.dels}</span>`;
     }
     tooltip.innerHTML = node.isFile
@@ -2208,7 +2208,7 @@ function topAuthorOf(e){
 function fileFill(node){
   if (colorMode === "churn") return churnColor(node.churnScore || 0);
   if (colorMode === "diff"){
-    const df = diffData && diffData.byPath.get(node.path);
+    const df = diffFor(node.path);
     if (!df) return "#232a32";
     return df.status === "A" ? "#3fb950" : df.status === "R" ? "#a371f7" : "#d29922";
   }
@@ -2232,7 +2232,7 @@ function annotateOverlays(){
       const e = churnMap.get(n.path);
       n.churnScore = e ? e.score : 0;
       n.churnMax = n.churnScore;
-      n.diffTouched = !!(diffData && diffData.byPath.has(n.path));
+      n.diffTouched = !!diffFor(n.path);
       if (n.churnScore > 0) scores.push(n.churnScore);
       return;
     }
@@ -2342,7 +2342,14 @@ function parseDiff(text){
       if (t === "+") cur.adds++; else if (t === "-") cur.dels++;
     }
   }
-  return {files, byPath: new Map(files.map(f => [f.path, f]))};
+  return {files, byPath: new Map(files.map(f => [f.path, f])),
+    // renames also indexed by their old path: when reviewing a rename that isn't
+    // applied locally yet, the loaded folder only knows the file by its old name
+    byOldPath: new Map(files.filter(f => f.status === "R" && f.oldPath !== f.path).map(f => [f.oldPath, f]))};
+}
+function diffFor(path){
+  if (!diffData) return null;
+  return diffData.byPath.get(path) || (diffData.byOldPath && diffData.byOldPath.get(path)) || null;
 }
 function normalizeGitText(text){
   if (!text) return text;
@@ -2515,7 +2522,11 @@ function applyDiff(d){
 function reviewApply(){
   if (!diffData) return;
   const changed = new Set();
-  for (const df of diffData.files){ const id = pathToId.get(df.path); if (id != null) changed.add(id); }
+  for (const df of diffData.files){
+    let id = pathToId.get(df.path);
+    if (id == null && df.status === "R") id = pathToId.get(df.oldPath); // rename not applied locally yet
+    if (id != null) changed.add(id);
+  }
   const show = new Set(changed);
   if ($("revImpact").checked && indexed){
     for (const id of changed) for (const from of edgesIn[id].keys()) show.add(from);
@@ -2543,7 +2554,8 @@ function renderReview(){
     row.innerHTML = `<span class="${cls}" style="flex:0 0 12px">${df.status}</span><span class="fp">${escapeHtml(df.path)}</span>` +
       `<span class="fs"><span class="badge-a">+${df.adds}</span> <span class="badge-d">−${df.dels}</span></span>`;
     row.onclick = () => {
-      const id = pathToId.get(df.path);
+      let id = pathToId.get(df.path);
+      if (id == null && df.status === "R") id = pathToId.get(df.oldPath); // open the pre-rename file
       if (id != null) openViewer(id, null, {tab:"diff"});
       else openDiffOnly(df.path);
     };
@@ -2560,7 +2572,7 @@ $("revClear").onclick = () => {
 };
 $("revImpact").onchange = () => reviewApply();
 function renderDiffHtml(path){
-  const df = diffData && diffData.byPath.get(path);
+  const df = diffFor(path);
   if (!df) return '<div style="padding:14px;color:var(--dim)">no diff for this file</div>';
   if (df.binary) return '<div style="padding:14px;color:var(--dim)">binary file changed</div>';
   const what = df.status === "A" ? "added" : df.status === "D" ? "deleted" : df.status === "R" ? "renamed from " + escapeHtml(df.oldPath) : "modified";
@@ -2582,7 +2594,9 @@ function openDiffOnly(path){
   if (!df) return;
   viewerFileId = null;
   $("vTitle").textContent = path;
-  $("vMeta").textContent = df.status === "D" ? "deleted in this diff" : "new in this diff";
+  $("vMeta").textContent = df.status === "D" ? "deleted in this diff"
+    : df.status === "R" ? "renamed from " + df.oldPath
+    : df.status === "A" ? "new in this diff" : "changed in this diff";
   $("vDeps").style.display = "none";
   $("vTabs").style.display = "none";
   $("viewer").classList.add("open");
