@@ -891,6 +891,7 @@ function extractRefs(id){
   if (PY_EXTS.has(ext)) pyImports(text, f, id, starts);
   else if (JS_EXTS.has(ext)) jsImports(text, f, id, starts);
   else if (C_EXTS.has(ext)) cIncludes(text, f, id, starts);
+  else if (ext === "lua") luaImports(text, f, id, starts);
   genericRefs(text, f, id, starts);
 }
 function resolvePyModule(mod, f){
@@ -951,6 +952,31 @@ function jsImports(text, f, id, starts){
       if (!e) continue;
       target = pathToId.get(base + "/index" + e); if (target != null) break;
     }
+    if (target != null) addEdge(id, target, "imp", lineAt(starts(), m.index));
+  }
+}
+function resolveLuaModule(mod){
+  if (!/^[A-Za-z0-9_-]+(?:[./][A-Za-z0-9_-]+)*$/.test(mod)) return null;
+  const stem = mod.replace(/\./g, "/");
+  // Assume ?.lua;?/init.lua at the repo root, then use the same suffix fallback
+  // as Python for src/ or lua/ layouts. Runtime package.path may differ.
+  return pathToId.get(stem + ".lua") ?? pathToId.get(stem + "/init.lua") ??
+    resolveSuffix(stem + ".lua") ?? resolveSuffix(stem + "/init.lua") ?? null;
+}
+function luaImports(text, f, id, starts){
+  // Skip comments and unrelated strings before matching literal require calls.
+  // Long strings are skipped too; only short, unescaped module names are resolved.
+  const re = /--\[(=*)\[[\s\S]*?(?:\]\1\]|$)|--[^\r\n]*|\[(=*)\[[\s\S]*?(?:\]\2\]|$)|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|\brequire\s*(?:\(\s*(["'])([^"'\\\r\n]+)\3\s*\)|(["'])([^"'\\\r\n]+)\5)/g;
+  let m, n = 0;
+  while ((m = re.exec(text))){
+    const mod = m[4] || m[6];
+    if (!mod) continue;
+    if (n++ >= 400) break;
+    // obj.require(...) and obj:require(...) are not the global loader.
+    let prev = m.index - 1;
+    while (prev >= 0 && /\s/.test(text[prev])) prev--;
+    if (prev >= 0 && (text[prev] === "." || text[prev] === ":")) continue;
+    const target = resolveLuaModule(mod);
     if (target != null) addEdge(id, target, "imp", lineAt(starts(), m.index));
   }
 }
@@ -1646,7 +1672,7 @@ function updateGraphEmpty(){
   else if (indexing) msg = "<b>Indexing…</b><br>Dependency links will appear here when it finishes.";
   else if (source === "github") msg = "<b>No dependency data — this repo was loaded from GitHub, which gives structure only</b> (file names and sizes, no contents).<br><br>To get the dependency graph, clone the repo and open the folder with <b>“Open local folder…”</b> (or drop it on the page). It's indexed once on your machine — nothing is uploaded — then cached for instant reuse.";
   else if (source === "diff") msg = "<b>This view was built from a diff only</b> — the changed files' names, but no contents, so there is nothing to index.<br>Open the repo folder with <b>“Open local folder…”</b> to get the dependency graph.";
-  else if (indexed) msg = "<b>No dependency links detected in this folder.</b><br>The indexer looks for imports (Python / JS / C-style) and mentions of other files' paths or names.";
+  else if (indexed) msg = "<b>No dependency links detected in this folder.</b><br>The indexer looks for imports (Python / JS / Lua / C-style) and mentions of other files' paths or names.";
   else msg = "<b>Not indexed yet.</b> Open a local folder to build the dependency index.";
   el.innerHTML = `<div class="box">${msg}</div>`;
 }

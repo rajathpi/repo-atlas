@@ -17,7 +17,7 @@ Treemaps tell you *what exists and where the bulk is*, but getting familiar with
 
 ![Dependency graph](shots/graph.png)
 
-Built from a real index of your code: **imports** (Python — including `from . import x` — JS/TS relative imports, C/C++/CUDA `#include`) plus **path references** — any file mentioning another file's path or name. That second kind is what catches YAML `include:` chains, CI files invoking scripts, Dockerfiles copying configs, and docs pointing at code.
+Built from a real index of your code: **imports** (Python — including `from . import x` — JS/TS relative imports, Lua literal `require` calls, C/C++/CUDA `#include`) plus **path references** — any file mentioning another file's path or name. That second kind is what catches YAML `include:` chains, CI files invoking scripts, Dockerfiles copying configs, and docs pointing at code.
 
 - **The graph follows the treemap.** Zoom into `services/auth/` on the treemap, switch to Graph, and you get that folder's contents and the links among them — not the whole repo again. The breadcrumb stays visible in both views, so clicking a crumb re-scopes the graph too, and *⌂ Top level* resets both together
 - Starts folder-level so it's readable; **double-click a folder** to burst it into its contents (children explode out of the parent), **right-click** to collapse
@@ -117,6 +117,7 @@ Local folders never leave your machine — files are read in the browser, the in
 ## Limitations
 
 - Dependency detection is best-effort pattern matching, not a compiler: it resolves what it can find inside the repo, skips external packages, and can miss dynamic imports or aliased paths. Treat a missing edge as "not detected", not "no dependency".
+- Lua recognizes `require("foo.bar")` and `require "foo.bar"` (single quotes and slash-separated names too). It tries `foo/bar.lua`, then `foo/bar/init.lua` at the repo root before falling back to matching path suffixes, as with Python. This approximates common layouts rather than evaluating `package.path`; ambiguous suffixes prefer shorter paths. Dynamic arguments, escaped or long-string module names, and custom loaders aren't resolved. Re-open a local folder to rebuild an index cached before Lua support.
 - The path-reference detector counts mentions — a filename in a comment counts (which is often exactly what you want to see).
 - GitHub's tree API truncates extremely large repos (>100k files); the status bar warns when that happens.
 - Sizes are bytes, not lines of code.
